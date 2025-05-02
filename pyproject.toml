@@ -1,22 +1,51 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "mssql_mcp_server"
+name = "mssql-mcp-server"
 version = "0.1.0"
-description = "A Model Context Protocol (MCP) server that enables secure interaction with Microsoft SQL Server databases."
+description = "A Model Context Protocol (MCP) server for Microsoft SQL Server"
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = [
-    "mcp>=1.0.0",
-    "pymssql>=2.2.8",
+requires-python = ">=3.8"
+authors = [{ name = "Richard Han", email = "richard.han@example.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
 ]
+dependencies = ["mcp>=1.0.0", "pymssql>=2.2.7"]
+
+[project.urls]
+"Homepage" = "https://github.com/RichardHan/mssql_mcp_server"
+"Bug Tracker" = "https://github.com/RichardHan/mssql_mcp_server/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
 
 [tool.mcp]
 system_dependencies.darwin = ["freetds"]
 system_dependencies.linux = ["freetds-dev"]
 system_dependencies.win32 = []
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
 
 [project.scripts]
 mssql_mcp_server = "mssql_mcp_server:main"

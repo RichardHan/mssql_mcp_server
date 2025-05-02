@@ -12,6 +12,7 @@ install: venv
 
 install-dev: install
 	$(BIN)/pip install -r requirements-dev.txt
+	$(BIN)/pip install -e .
 
 test: install-dev
 	$(BIN)/pytest -v
