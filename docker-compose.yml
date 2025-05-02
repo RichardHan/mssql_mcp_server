@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  # SQL Server
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    platform: linux/amd64
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${MSSQL_PASSWORD:-StrongPassword123!}
+    ports:
+      - "${HOST_SQL_PORT:-1434}:1433"
+    healthcheck:
+      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "${MSSQL_PASSWORD:-StrongPassword123!}" -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - mssql_data:/var/opt/mssql
+    mem_limit: ${SQL_MEMORY_LIMIT:-2g}
+
+  # MCP Server
+  mcp_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mssql:
+        condition: service_healthy
+    environment:
+      - MSSQL_SERVER=${MSSQL_SERVER:-mssql}
+      - MSSQL_PORT=${MSSQL_PORT:-1433}
+      - MSSQL_USER=${MSSQL_USER:-sa}
+      - MSSQL_PASSWORD=${MSSQL_PASSWORD:-StrongPassword123!}
+      - MSSQL_DATABASE=${MSSQL_DATABASE:-master}
+    ports:
+      - "${HOST_MCP_PORT:-3000}:3000"
+    volumes:
+      - .:/app
+
+volumes:
+  mssql_data:

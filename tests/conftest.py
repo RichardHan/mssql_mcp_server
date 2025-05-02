@@ -10,10 +10,11 @@ def mssql_connection():
         connection = pymssql.connect(
             server=os.getenv("MSSQL_SERVER", "localhost"),
             user=os.getenv("MSSQL_USER", "sa"),
-            password=os.getenv("MSSQL_PASSWORD", "testpassword"),
-            database=os.getenv("MSSQL_DATABASE", "test_db")
+            password=os.getenv("MSSQL_PASSWORD", "StrongPassword123!"),
+            database=os.getenv("MSSQL_DATABASE", "master"),
+            port=os.getenv("MSSQL_PORT", "1433")
         )
-        
+
         # Create a test table
         cursor = connection.cursor()
         cursor.execute("""
@@ -25,15 +26,15 @@ def mssql_connection():
             )
         """)
         connection.commit()
-        
+
         yield connection
-        
+
         # Cleanup
         cursor.execute("DROP TABLE IF EXISTS test_table")
         connection.commit()
         cursor.close()
         connection.close()
-            
+
     except pymssql.Error as e:
         pytest.fail(f"Failed to connect to SQL Server: {e}")
 

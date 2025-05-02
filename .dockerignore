@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Virtual Environment
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo

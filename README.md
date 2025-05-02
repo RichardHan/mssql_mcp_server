@@ -28,6 +28,7 @@ MSSQL_SERVER=localhost
 MSSQL_USER=your_username
 MSSQL_PASSWORD=your_password
 MSSQL_DATABASE=your_database
+MSSQL_PORT=1433  # Optional, defaults to 1433
 ```
 
 ## Usage
@@ -42,7 +43,7 @@ Add this to your `claude_desktop_config.json`:
     "mssql": {
       "command": "uv",
       "args": [
-        "--directory", 
+        "--directory",
         "path/to/mssql_mcp_server",
         "run",
         "mssql_mcp_server"
@@ -51,7 +52,8 @@ Add this to your `claude_desktop_config.json`:
         "MSSQL_SERVER": "localhost",
         "MSSQL_USER": "your_username",
         "MSSQL_PASSWORD": "your_password",
-        "MSSQL_DATABASE": "your_database"
+        "MSSQL_DATABASE": "your_database",
+        "MSSQL_PORT": "1433"  # Optional, defaults to 1433
       }
     }
   }
@@ -75,16 +77,26 @@ python -m mssql_mcp_server
 git clone https://github.com/RichardHan/mssql_mcp_server.git
 cd mssql_mcp_server
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
-
-# Install development dependencies
-pip install -r requirements-dev.txt
+# Setup development environment
+make install-dev
 
 # Run tests
-pytest
+make test
+
+# Format code
+make format
+
+# Lint code
+make lint
+
+# Run the server
+make run
+
+# Clean up
+make clean
 ```
+
+For more commands, see the `Makefile`.
 
 ## Security Considerations
 
@@ -104,6 +116,7 @@ This MCP server requires database access to function. For security:
 5. **Regular security reviews** of database access
 
 See [SQL Server Security Configuration Guide](SECURITY.md) for detailed instructions on:
+
 - Creating a restricted SQL Server login
 - Setting appropriate permissions
 - Monitoring database access
@@ -122,3 +135,56 @@ MIT License - see LICENSE file for details.
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+## Docker Testing
+
+This repository includes Docker configuration for easy testing with a SQL Server instance:
+
+```bash
+# Start SQL Server and MCP server containers
+make docker-build
+make docker-up
+
+# Test the connection to the SQL Server
+make test-connection
+
+# Run tests inside the Docker container
+make docker-test
+
+# To tear down the containers
+make docker-down
+```
+
+### Docker Environment Variables
+
+You can customize the Docker configuration by setting environment variables before running `docker-compose`:
+
+```bash
+# Change the host port for SQL Server
+export HOST_SQL_PORT=1435
+# Change the SQL Server password
+export MSSQL_PASSWORD=MyCustomPassword!
+# Start the containers with custom configuration
+make docker-up
+```
+
+Available environment variables:
+
+| Variable         | Default            | Description                           |
+| ---------------- | ------------------ | ------------------------------------- |
+| MSSQL_SERVER     | mssql              | Server hostname (container name)      |
+| MSSQL_PORT       | 1433               | SQL Server port (internal)            |
+| MSSQL_USER       | sa                 | SQL Server username                   |
+| MSSQL_PASSWORD   | StrongPassword123! | SQL Server password                   |
+| MSSQL_DATABASE   | master             | Default database                      |
+| HOST_SQL_PORT    | 1434               | Host port mapped to SQL Server        |
+| HOST_MCP_PORT    | 3000               | Host port mapped to MCP server        |
+| SQL_MEMORY_LIMIT | 2g                 | Memory limit for SQL Server container |
+
+The Docker setup includes:
+
+- A SQL Server 2019 container with a default `sa` user
+- The MCP server container with all dependencies pre-installed
+- Proper networking between the containers
+
+This is useful for development and testing without requiring a local SQL Server installation.
