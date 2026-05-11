@@ -95,6 +95,13 @@ def get_db_config():
             logger.error("MSSQL_USER, MSSQL_PASSWORD, and MSSQL_DATABASE are required")
             raise ValueError("Missing required database configuration")
     
+    # --- FIX / RED DE SEGURIDAD AÑADIDA ---
+    # Asegura que 'encrypt' jamás pase como argumento a pymssql.connect() 
+    # para evitar TypeError, incluso si variables de entorno heredadas lo inyectan.
+    if "encrypt" in config:
+        del config["encrypt"]
+    # --------------------------------------
+
     return config
 
 def get_command():
