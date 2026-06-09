@@ -88,12 +88,15 @@ def get_db_config():
         config.pop("user", None)
         config.pop("password", None)
         logger.info("Using Windows Authentication")
+    
     else:
         # SQL Authentication - user and password are required
         if not all([config["user"], config["password"], config["database"]]):
             logger.error("Missing required database configuration. Please check environment variables:")
             logger.error("MSSQL_USER, MSSQL_PASSWORD, and MSSQL_DATABASE are required")
             raise ValueError("Missing required database configuration")
+    # Query timeout support
+    config["timeout"] = int(os.getenv("MSSQL_QUERY_TIMEOUT", "300"))
     
     return config
 
@@ -189,9 +192,15 @@ async def read_resource(uri: AnyUrl) -> str:
         conn.close()
         return "\n".join([",".join(columns)] + result)
                 
+    except pymssql.OperationalError as e:
+        if "timed out" in str(e).lower():
+            logger.error(f"Query timed out after {os.getenv('MSSQL_QUERY_TIMEOUT', '300')} seconds: {query[:200]}")
+            return [TextContent(type="text", text="Query timed out and was terminated. Please narrow the query and try again.")]
+        logger.error(f"Error executing SQL '{query}': {e}")
+        return [TextContent(type="text", text=f"Error executing query: {str(e)}")]
     except Exception as e:
-        logger.error(f"Database error reading resource {uri}: {str(e)}")
-        raise RuntimeError(f"Database error: {str(e)}")
+        logger.error(f"Error executing SQL '{query}': {e}")
+        return [TextContent(type="text", text=f"Error executing query: {str(e)}")]
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
