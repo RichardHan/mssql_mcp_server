@@ -70,6 +70,7 @@ MSSQL_PASSWORD=your_password
 ```bash
 MSSQL_PORT=1433                 # Custom port (default: 1433)
 MSSQL_ENCRYPT=true              # Force encryption
+MSSQL_QUERY_TIMEOUT=300         # Query timeout in seconds (default: 300). Queries exceeding this limit are automatically terminated.
 ```
 
 ## Alternative Installation Methods
