@@ -78,7 +78,7 @@ class TestSQLInjectionPrevention:
                 # Test that passwords or sensitive data aren't exposed in errors
                 mock_cursor.execute.side_effect = Exception("Login failed for user 'sa' with password 'secret123'")
                 
-                result = await call_tool("execute_sql", {"query": "SELECT * FROM users"})
+                result = await call_tool("query", {"query": "SELECT * FROM users"})
                 
                 # Verify sensitive info is not in the error message
                 assert isinstance(result, list)
@@ -109,7 +109,7 @@ class TestInputValidation:
         }):
             for invalid_input in invalid_inputs:
                 with pytest.raises(ValueError):
-                    await call_tool("execute_sql", invalid_input)
+                    await call_tool("query", invalid_input)
     
     def test_environment_variable_validation(self):
         """Test that environment variables are validated."""
@@ -182,7 +182,7 @@ class TestResourceAccessControl:
                     # The queries will be executed (current implementation doesn't block them)
                     # but we ensure errors are handled gracefully
                     mock_cursor.execute.side_effect = Exception("Permission denied")
-                    result = await call_tool("execute_sql", {"query": query})
+                    result = await call_tool("query", {"query": query})
                     
                     assert len(result) == 1
                     assert "Error executing query" in result[0].text

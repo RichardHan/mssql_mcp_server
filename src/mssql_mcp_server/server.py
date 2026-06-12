@@ -4,7 +4,7 @@ import os
 import re
 import pymssql
 from mcp.server import Server
-from mcp.types import Resource, Tool, TextContent
+from mcp.types import Resource, Tool, TextContent, ToolAnnotations
 from pydantic import AnyUrl
 
 # Configure logging
@@ -61,20 +61,17 @@ def get_db_config():
             logger.warning(f"Invalid MSSQL_PORT value: {port}. Using default port.")
     
     # Encryption settings for Azure SQL (Issue #11)
-    # Check if we're connecting to Azure SQL
+    # pymssql 2.3+ uses 'encryption' (not the removed 'encrypt' kwarg)
     if config["server"] and ".database.windows.net" in config["server"]:
         config["tds_version"] = "7.4"  # Required for Azure SQL
-        # Azure SQL requires encryption - use connection string format for pymssql 2.3+
-        # This improves upon TDS-only approach by being more explicit
         if os.getenv("MSSQL_ENCRYPT", "true").lower() == "true":
-            config["server"] += ";Encrypt=yes;TrustServerCertificate=no"
+            config["encryption"] = "require"
     else:
-        # For non-Azure connections, respect the MSSQL_ENCRYPT setting
-        # Use connection string format in addition to TDS version for better compatibility
+        # For non-Azure, only enable encryption when explicitly requested
         encrypt_str = os.getenv("MSSQL_ENCRYPT", "false")
         if encrypt_str.lower() == "true":
-            config["tds_version"] = "7.4"  # Keep existing TDS approach
-            config["server"] += ";Encrypt=yes;TrustServerCertificate=yes"  # Add explicit setting
+            config["tds_version"] = "7.4"
+            config["encryption"] = "require"
             
     # Windows Authentication support (Issue #7)
     use_windows_auth = os.getenv("MSSQL_WINDOWS_AUTH", "false").lower() == "true"
@@ -98,8 +95,15 @@ def get_db_config():
     return config
 
 def get_command():
-    """Get the command to execute SQL queries."""
-    return os.getenv("MSSQL_COMMAND", "execute_sql")
+    """Get the MCP tool name (query for read-only, execute_sql for write mode)."""
+    override = os.getenv("MSSQL_COMMAND")
+    if override:
+        return override
+    return "execute_sql" if allow_writes() else "query"
+
+def allow_writes() -> bool:
+    """Whether non-SELECT statements are permitted (default: read-only)."""
+    return os.getenv("MSSQL_ALLOW_WRITES", "false").lower() in ("1", "true", "yes")
 
 def is_select_query(query: str) -> bool:
     """
@@ -123,7 +127,7 @@ def is_select_query(query: str) -> bool:
     
     # Get the first non-empty word after stripping whitespace
     first_word = query_cleaned.strip().split()[0] if query_cleaned.strip() else ""
-    return first_word.upper() == "SELECT"
+    return first_word.upper() in ("SELECT", "WITH")
 
 # Initialize server
 app = Server("mssql_mcp_server")
@@ -198,10 +202,22 @@ async def list_tools() -> list[Tool]:
     """List available SQL Server tools."""
     command = get_command()
     logger.info("Listing tools...")
+    annotations = None
+    if not allow_writes():
+        annotations = ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
     return [
         Tool(
             name=command,
-            description="Execute an SQL query on the SQL Server",
+            description=(
+                "Execute an SQL query on the SQL Server"
+                if allow_writes()
+                else "Run a read-only SQL query"
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -211,14 +227,14 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["query"]
-            }
+            },
+            annotations=annotations,
         )
     ]
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Execute SQL commands."""
-    config = get_db_config()
     command = get_command()
     logger.info(f"Calling tool: {name} with arguments: {arguments}")
     
@@ -228,7 +244,18 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     query = arguments.get("query")
     if not query:
         raise ValueError("Query is required")
-    
+
+    if not allow_writes() and not is_select_query(query):
+        return [TextContent(
+            type="text",
+            text=(
+                "Error: only SELECT queries are allowed in read-only mode. "
+                "Set MSSQL_ALLOW_WRITES=1 to enable writes (Agent mode)."
+            ),
+        )]
+
+    config = get_db_config()
+
     try:
         conn = pymssql.connect(**config)
         cursor = conn.cursor()
@@ -276,7 +303,8 @@ async def main():
         server_info += f":{config['port']}"
     user_info = config.get('user', 'Windows Auth')
     logger.info(f"Database config: {server_info}/{config['database']} as {user_info}")
-    
+    logger.info("Write mode: %s", "enabled" if allow_writes() else "read-only")
+
     async with stdio_server() as (read_stream, write_stream):
         try:
             await app.run(

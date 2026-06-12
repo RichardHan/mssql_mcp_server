@@ -55,8 +55,9 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == True
+            assert config['encryption'] == 'require'
             assert config['tds_version'] == '7.4'
+            assert ';Encrypt=' not in config['server']
     
     def test_localdb_configuration(self):
         """Test LocalDB connection string conversion."""
@@ -108,7 +109,8 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == True
+            assert config['encryption'] == 'require'
+            assert config['tds_version'] == '7.4'
         
         # Non-Azure without encryption (default)
         with patch.dict(os.environ, {
@@ -118,7 +120,7 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == False
+            assert 'encryption' not in config
 
 
 class TestTableNameValidation:

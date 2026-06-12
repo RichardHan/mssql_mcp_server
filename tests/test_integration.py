@@ -50,12 +50,12 @@ class TestMCPProtocolIntegration:
                 # Test tool listing
                 tools = await app.list_tools()
                 assert len(tools) == 1
-                assert tools[0].name == "execute_sql"
+                assert tools[0].name == "query"
                 
                 # Test tool execution
                 mock_cursor.description = [('count',)]
                 mock_cursor.fetchall.return_value = [(42,)]
-                result = await app.call_tool("execute_sql", {"query": "SELECT COUNT(*) FROM users"})
+                result = await app.call_tool("query", {"query": "SELECT COUNT(*) FROM users"})
                 
                 assert len(result) == 1
                 assert isinstance(result[0], TextContent)
@@ -135,6 +135,7 @@ class TestDatabaseIntegration:
         
         with patch('pymssql.connect', return_value=mock_conn):
             with patch.dict('os.environ', {
+                'MSSQL_ALLOW_WRITES': '1',
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
@@ -165,7 +166,7 @@ class TestDatabaseIntegration:
                 mock_cursor.execute.side_effect = Exception("Query failed")
                 
                 try:
-                    await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+                    await app.call_tool("query", {"query": "SELECT * FROM users"})
                 except:
                     pass
                 
@@ -211,7 +212,7 @@ class TestEdgeCases:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {
+                result = await app.call_tool("query", {
                     "query": "SELECT * FROM users"
                 })
                 
@@ -243,7 +244,7 @@ class TestEdgeCases:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {
+                result = await app.call_tool("query", {
                     "query": "SELECT data FROM test_table"
                 })
                 

@@ -67,7 +67,7 @@ class TestConnectionErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+                result = await app.call_tool("query", {"query": "SELECT * FROM users"})
                 assert "Error executing query" in result[0].text
                 
                 # Ensure cleanup attempted
@@ -93,7 +93,7 @@ class TestQueryErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {"query": "SELCT * FROM users"})
+                result = await app.call_tool("query", {"query": "SELCT * FROM users"})
                 assert "Error executing query" in result[0].text
                 assert len(result) == 1
     
@@ -112,7 +112,7 @@ class TestQueryErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM sensitive_table"})
+                result = await app.call_tool("query", {"query": "SELECT * FROM sensitive_table"})
                 assert "Error executing query" in result[0].text
     
     @pytest.mark.asyncio
@@ -130,7 +130,7 @@ class TestQueryErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {
+                result = await app.call_tool("query", {
                     "query": "UPDATE users SET status = 'active'"
                 })
                 assert "Error executing query" in result[0].text
@@ -258,7 +258,7 @@ class TestRecoveryScenarios:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 # Should complete without timeout
-                result = await app.call_tool("execute_sql", {
+                result = await app.call_tool("query", {
                     "query": "SELECT COUNT(*) FROM large_table"
                 })
                 assert "1" in result[0].text
@@ -282,7 +282,7 @@ class TestMemoryAndResourceManagement:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+                result = await app.call_tool("query", {"query": "SELECT * FROM users"})
                 
                 # Cursor should be closed despite error
                 mock_cursor.close.assert_called()

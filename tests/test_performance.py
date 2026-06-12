@@ -31,7 +31,7 @@ class TestPerformance:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 start_time = time.time()
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+                result = await app.call_tool("query", {"query": "SELECT * FROM users"})
                 end_time = time.time()
                 
                 # Query should complete in reasonable time (< 1 second for mock)
@@ -58,7 +58,7 @@ class TestPerformance:
                 # Run 50 concurrent queries
                 start_time = time.time()
                 tasks = [
-                    app.call_tool("execute_sql", {"query": f"SELECT COUNT(*) FROM table_{i}"})
+                    app.call_tool("query", {"query": f"SELECT COUNT(*) FROM table_{i}"})
                     for i in range(50)
                 ]
                 results = await asyncio.gather(*tasks)
@@ -90,7 +90,7 @@ class TestPerformance:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 start_time = time.time()
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM large_table"})
+                result = await app.call_tool("query", {"query": "SELECT * FROM large_table"})
                 end_time = time.time()
                 
                 # Should handle large results efficiently
@@ -163,7 +163,7 @@ class TestMemoryUsage:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 # Should handle large data without excessive memory use
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM big_table"})
+                result = await app.call_tool("query", {"query": "SELECT * FROM big_table"})
                 
                 # Result should be created
                 assert len(result) == 1
@@ -196,7 +196,7 @@ class TestLoadHandling:
                 start_time = time.time()
                 tasks = []
                 for _ in range(100):
-                    tasks.append(app.call_tool("execute_sql", {"query": "SELECT 1"}))
+                    tasks.append(app.call_tool("query", {"query": "SELECT 1"}))
                 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 end_time = time.time()
@@ -233,7 +233,7 @@ class TestLoadHandling:
                 
                 while time.time() - start_time < 10:
                     try:
-                        result = await app.call_tool("execute_sql", {"query": "SELECT 'ok'"})
+                        result = await app.call_tool("query", {"query": "SELECT 'ok'"})
                         request_count += 1
                         assert "ok" in result[0].text
                     except Exception:
@@ -312,7 +312,7 @@ class TestScalability:
                 
                 for query in queries:
                     start_time = time.time()
-                    result = await app.call_tool("execute_sql", {"query": query})
+                    result = await app.call_tool("query", {"query": query})
                     end_time = time.time()
                     
                     # All queries should complete successfully
