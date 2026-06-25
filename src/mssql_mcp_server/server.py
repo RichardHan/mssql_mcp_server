@@ -94,7 +94,8 @@ def get_db_config():
             logger.error("Missing required database configuration. Please check environment variables:")
             logger.error("MSSQL_USER, MSSQL_PASSWORD, and MSSQL_DATABASE are required")
             raise ValueError("Missing required database configuration")
-    
+     # Query timeout support
+    config["timeout"] = int(os.getenv("MSSQL_QUERY_TIMEOUT", "300"))
     return config
 
 def get_command():
@@ -190,8 +191,8 @@ async def read_resource(uri: AnyUrl) -> str:
         return "\n".join([",".join(columns)] + result)
                 
     except Exception as e:
-        logger.error(f"Database error reading resource {uri}: {str(e)}")
-        raise RuntimeError(f"Database error: {str(e)}")
+        logger.error(f"Error executing SQL '{query}': {e}")
+        return [TextContent(type="text", text=f"Error executing query: {str(e)}")]
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
