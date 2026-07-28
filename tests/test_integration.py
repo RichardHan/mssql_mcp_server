@@ -132,6 +132,7 @@ class TestDatabaseIntegration:
         mock_cursor = Mock()
         mock_conn.cursor.return_value = mock_cursor
         mock_cursor.rowcount = 1
+        mock_cursor.description = None
         
         with (
             patch('pymssql.connect', return_value=mock_conn),
