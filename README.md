@@ -7,7 +7,7 @@
   <img width="380" height="200" src="https://glama.ai/mcp/servers/29cpe19k30/badge" alt="Microsoft SQL Server MCP server" />
 </a>
 
-A Model Context Protocol (MCP) server for secure SQL Server database access through Claude Desktop.
+A Model Context Protocol (MCP) server for secure SQL Server database access.
 
 ## Features
 
@@ -16,12 +16,14 @@ A Model Context Protocol (MCP) server for secure SQL Server database access thro
 - 🔐 Multiple authentication methods (SQL, Windows, Azure AD)
 - 🏢 LocalDB and Azure SQL support
 - 🔌 Custom port configuration
+- 🧩 Opt-in JSON and standards-compliant CSV query results
+- 📦 Optional file-backed storage and pagination for oversized results
 
 ## Quick Start
 
-### Install with Claude Desktop
+### Install with an MCP client
 
-Add to your `claude_desktop_config.json`:
+Add the server to your MCP client configuration:
 
 ```json
 {
@@ -80,6 +82,34 @@ MSSQL_COMMAND=query             # Optional override for the MCP tool name
 
 By default the server exposes a **`query`** tool that only accepts `SELECT` / `WITH` statements and sets `readOnlyHint` (so Cursor Ask mode can use it). Set `MSSQL_ALLOW_WRITES=1` to expose **`execute_sql`** and allow writes. Prefer a read-only SQL login for the default mode.
 
+## Query Result Formats
+The default remains `legacy`. Set `MSSQL_RESULT_FORMAT` to `json` or `csv`, or
+override one `query` call (or `execute_sql` in write mode) with its
+`result_format` argument. JSON uses
+compact `columns` and `rows` arrays; `NULL` is `null` and Unicode and delimiters
+are preserved. `legacy` remains available for existing clients.
+
+```bash
+MSSQL_RESULT_FORMAT=json        # legacy, json, or csv
+```
+
+### Oversized Results
+File-backed storage is opt-in via `MSSQL_RESULT_OUTPUT_DIR`. Results exceeding the
+inline row or byte threshold are written as complete JSON files; MCP receives
+metadata and preview rows instead of the full result.
+```bash
+MSSQL_RESULT_OUTPUT_DIR=/private/mssql-results
+MSSQL_RESULT_MAX_INLINE_ROWS=200
+MSSQL_RESULT_MAX_INLINE_BYTES=32768
+```
+Set `store_result: true` to force storage. Stored results can be read with
+`get_sql_result` (bounded row pages) or `read_sql_result_chunk` (bounded file chunks).
+## Export Stored Results
+`export-sql-result` validates a complete canonical result and writes compact JSON to stdout.
+Use either `--result-id ID [--result-dir DIR]` or `--results-json PATH`.
+```bash
+export-sql-result --result-id ID --result-dir /private/mssql-results > full-result.json
+```
 
 ## Alternative Installation Methods
 
@@ -88,7 +118,7 @@ By default the server exposes a **`query`** tool that only accepts `SELECT` / `W
 pip install microsoft_sql_server_mcp
 ```
 
-Then in `claude_desktop_config.json`:
+Then in your MCP client configuration:
 ```json
 {
   "mcpServers": {
