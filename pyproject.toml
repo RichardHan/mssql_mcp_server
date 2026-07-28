@@ -39,3 +39,6 @@ mssql_mcp_server = "mssql_mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mssql_mcp_server"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["BLE001", "E722", "S110", "SIM117"]
