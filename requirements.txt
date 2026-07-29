@@ -1,2 +1,4 @@
-mcp>=1.0.0
+# Pinned below 2.0.0: mcp 2.0.0 removed the legacy `Server` decorator API used by
+# src/mssql_mcp_server/server.py. Drop the upper bound after migrating to 2.x.
+mcp>=1.0.0,<2.0.0
 pymssql>=2.2.7

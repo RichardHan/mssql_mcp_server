@@ -99,6 +99,22 @@ cd mssql_mcp_server
 pip install -e .
 ```
 
+## Dependency notes
+
+The `mcp` SDK is pinned to `>=1.0.0,<2.0.0` in both `pyproject.toml` and `requirements.txt`.
+
+`mcp` 2.0.0 removed the legacy `Server` decorator API (`@app.list_resources()`,
+`@app.list_tools()`, ...) that `src/mssql_mcp_server/server.py` is built on, so an
+unconstrained install crashes at import time with:
+
+```
+AttributeError: 'Server' object has no attribute 'list_resources'
+```
+
+This matters most for `uvx --from git+...` launches, which resolve dependencies fresh on
+every cold start and ignore `uv.lock`. Do not drop the upper bound until the server is
+migrated to the 2.x API.
+
 ## Security
 
 - Create a dedicated SQL user with minimal permissions

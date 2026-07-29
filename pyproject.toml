@@ -18,7 +18,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    # Pinned below 2.0.0: mcp 2.0.0 removed the legacy `Server` decorator API
+    # (`@app.list_resources()` etc.) that src/mssql_mcp_server/server.py relies on.
+    # Remove the upper bound once the server is migrated to the 2.x API.
+    "mcp>=1.0.0,<2.0.0",
     "pymssql>=2.2.8",
 ]
 
