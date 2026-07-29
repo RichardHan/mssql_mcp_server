@@ -60,6 +60,18 @@ def _env_non_negative_int(name: str, default: int) -> int:
     return value
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"{name} must be true or false")
+
+
 def _validate_int(value: Any, name: str, *, minimum: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{name} must be an integer")  # noqa: TRY004
@@ -83,7 +95,9 @@ class ResultStoreConfig:
     max_page_source_bytes: int = 64 * 1024 * 1024
     max_chunk_bytes: int = 16 * 1024
     ttl_seconds: int = 24 * 60 * 60
+    max_file_bytes: int = 1024 * 1024 * 1024
     max_store_bytes: int = 1024 * 1024 * 1024
+    include_path: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.max_page_bytes, bool) or not isinstance(
@@ -141,9 +155,13 @@ class ResultStoreConfig:
                 "MSSQL_RESULT_MAX_CHUNK_BYTES", 16 * 1024
             ),
             ttl_seconds=_env_non_negative_int("MSSQL_RESULT_TTL_SECONDS", 24 * 60 * 60),
+            max_file_bytes=_env_non_negative_int(
+                "MSSQL_RESULT_MAX_FILE_BYTES", 1024 * 1024 * 1024
+            ),
             max_store_bytes=_env_non_negative_int(
                 "MSSQL_RESULT_MAX_STORE_BYTES", 1024 * 1024 * 1024
             ),
+            include_path=_env_bool("MSSQL_RESULT_INCLUDE_PATH", False),
         )
         if config.max_page_rows < 1:
             raise ValueError("MSSQL_RESULT_MAX_PAGE_ROWS must be at least 1")
@@ -202,10 +220,17 @@ class ResultStore:
     def store(self, envelope: dict[str, Any], payload_bytes: bytes) -> dict[str, Any]:
         root = self._require_root()
         if (
+            self.config.max_file_bytes > 0
+            and len(payload_bytes) > self.config.max_file_bytes
+        ):
+            raise ValueError("Serialized result exceeds MSSQL_RESULT_MAX_FILE_BYTES")
+        if (
             self.config.max_store_bytes > 0
             and len(payload_bytes) > self.config.max_store_bytes
         ):
-            raise ValueError("Serialized result exceeds MSSQL_RESULT_MAX_STORE_BYTES")
+            raise ValueError(
+                "Serialized result cannot fit within MSSQL_RESULT_MAX_STORE_BYTES"
+            )
 
         result_id = uuid4().hex
         final_path = root / f"{result_id}.json"
@@ -233,18 +258,20 @@ class ResultStore:
             if self.config.ttl_seconds > 0
             else None
         )
-        return {
+        summary = {
             "columns": envelope["columns"],
             "row_count": envelope["row_count"],
             "stored": True,
             "result_id": result_id,
-            "result_path": str(final_path),
             "byte_count": len(payload_bytes),
             "sha256": hashlib.sha256(payload_bytes).hexdigest(),
             "preview_rows": self._preview(envelope["rows"]),
             "truncated": envelope["truncated"],
             "expires_at": expires_at,
         }
+        if self.config.include_path:
+            summary["result_path"] = str(final_path)
+        return summary
 
     def read_page(
         self, result_id: str, *, offset: Any = 0, limit: Any = None

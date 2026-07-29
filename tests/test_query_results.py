@@ -33,6 +33,10 @@ DB_ENV = {
 }
 
 
+def stored_path(result_dir: Path, summary: dict) -> Path:
+    return result_dir / f'{summary["result_id"]}.json'
+
+
 def make_connection(columns, rows):
     cursor = Mock()
     cursor.description = [(column,) for column in columns]
@@ -560,7 +564,8 @@ async def test_storage_enabled_formats_use_canonical_json_threshold(
 
     summary = json.loads(content[0].text)
     assert summary["stored"] is True
-    stored = json.loads(Path(summary["result_path"]).read_text(encoding="utf-8"))
+    assert "result_path" not in summary
+    stored = json.loads(stored_path(tmp_path, summary).read_text(encoding="utf-8"))
     assert stored["rows"] == rows
 
 
@@ -585,7 +590,8 @@ async def test_240_rows_are_stored_instead_of_returned_inline(tmp_path):
     assert summary["stored"] is True
     assert summary["row_count"] == 240
     assert "rows" not in summary
-    stored = json.loads(Path(summary["result_path"]).read_text(encoding="utf-8"))
+    assert "result_path" not in summary
+    stored = json.loads(stored_path(tmp_path, summary).read_text(encoding="utf-8"))
     assert stored["rows"] == rows
     assert len(content[0].text.encode("utf-8")) < len(
         json.dumps(stored, ensure_ascii=False).encode("utf-8")
@@ -613,8 +619,29 @@ async def test_62kb_definition_is_stored_without_preview_leak(tmp_path):
     assert summary["stored"] is True
     assert summary["preview_rows"] == []
     assert definition not in content[0].text
-    stored = json.loads(Path(summary["result_path"]).read_text(encoding="utf-8"))
+    stored = json.loads(stored_path(tmp_path, summary).read_text(encoding="utf-8"))
     assert stored["rows"] == [[definition]]
+
+
+@pytest.mark.asyncio
+async def test_stored_result_path_can_be_explicitly_enabled(tmp_path):
+    connection, _ = make_connection(["id"], [[1]])
+    env = {
+        **DB_ENV,
+        "MSSQL_RESULT_OUTPUT_DIR": str(tmp_path),
+        "MSSQL_RESULT_INCLUDE_PATH": "true",
+    }
+
+    with (
+        patch("pymssql.connect", return_value=connection),
+        patch.dict("os.environ", env, clear=True),
+    ):
+        content = await call_tool(
+            "execute_sql", {"query": "SELECT id", "store_result": True}
+        )
+
+    summary = json.loads(content[0].text)
+    assert summary["result_path"] == str(stored_path(tmp_path, summary))
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,7 @@ def make_store(tmp_path: Path, **overrides) -> ResultStore:
         "max_page_source_bytes": 64 * 1024 * 1024,
         "max_chunk_bytes": 16,
         "ttl_seconds": 3600,
+        "max_file_bytes": 1024 * 1024,
         "max_store_bytes": 1024 * 1024,
     }
     defaults.update(overrides)
@@ -35,6 +36,10 @@ def persist(store: ResultStore, rows):
     envelope = build_result(["id", "value"], rows)
     payload = serialize_json(envelope).encode("utf-8")
     return envelope, payload, store.store(envelope, payload)
+
+
+def stored_path(result_dir: Path, summary: dict) -> Path:
+    return result_dir / f'{summary["result_id"]}.json'
 
 
 def test_storage_is_disabled_without_an_output_directory():
@@ -89,6 +94,25 @@ def test_zero_page_source_limit_is_preserved_from_env(tmp_path, monkeypatch):
     assert ResultStoreConfig.from_env().max_page_source_bytes == 0
 
 
+def test_file_limit_and_path_policy_are_loaded_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("MSSQL_RESULT_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("MSSQL_RESULT_MAX_FILE_BYTES", "1234")
+    monkeypatch.setenv("MSSQL_RESULT_INCLUDE_PATH", "true")
+
+    config = ResultStoreConfig.from_env()
+
+    assert config.max_file_bytes == 1234
+    assert config.include_path is True
+
+
+def test_invalid_include_path_value_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("MSSQL_RESULT_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("MSSQL_RESULT_INCLUDE_PATH", "yes")
+
+    with pytest.raises(ValueError, match="MSSQL_RESULT_INCLUDE_PATH"):
+        ResultStoreConfig.from_env()
+
+
 @pytest.mark.parametrize(
     ("row_count", "payload_size", "expected"),
     [
@@ -110,7 +134,7 @@ def test_stored_file_is_canonical_json_and_summary_is_bounded(tmp_path):
     rows = [[1, "Region, Segment"], [2, "中文\r\n多行"], [3, None]]
     envelope, payload, summary = persist(store, rows)
 
-    result_path = Path(summary["result_path"])
+    result_path = stored_path(tmp_path, summary)
     assert result_path.parent == tmp_path.resolve()
     assert result_path.read_bytes() == payload
     assert json.loads(payload) == envelope
@@ -123,6 +147,68 @@ def test_stored_file_is_canonical_json_and_summary_is_bounded(tmp_path):
     assert summary["truncated"] is False
     assert summary["expires_at"] is not None
     assert "rows" not in summary
+    assert "result_path" not in summary
+
+
+def test_result_path_is_returned_only_when_explicitly_enabled(tmp_path):
+    store = make_store(tmp_path, include_path=True)
+
+    _, _, summary = persist(store, [[1, "value"]])
+
+    assert summary["result_path"] == str(stored_path(tmp_path, summary))
+
+
+def test_single_result_limit_is_independent_from_store_quota(tmp_path):
+    envelope = build_result(["value"], [["x" * 100]])
+    payload = serialize_json(envelope).encode("utf-8")
+    store = make_store(
+        tmp_path,
+        max_file_bytes=len(payload) - 1,
+        max_store_bytes=len(payload) * 2,
+    )
+
+    with pytest.raises(ValueError, match="MSSQL_RESULT_MAX_FILE_BYTES"):
+        store.store(envelope, payload)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_store_quota_evicts_oldest_result(tmp_path):
+    first = build_result(["value"], [["first"]])
+    second = build_result(["value"], [["second"]])
+    first_payload = serialize_json(first).encode("utf-8")
+    second_payload = serialize_json(second).encode("utf-8")
+    store = make_store(
+        tmp_path,
+        max_file_bytes=0,
+        max_store_bytes=len(first_payload) + len(second_payload) - 1,
+    )
+    first_summary = store.store(first, first_payload)
+    first_path = stored_path(tmp_path, first_summary)
+    os.utime(first_path, (time.time() - 10, time.time() - 10))
+
+    second_summary = store.store(second, second_payload)
+
+    assert not first_path.exists()
+    assert stored_path(tmp_path, second_summary).exists()
+
+
+def test_result_larger_than_store_quota_is_rejected_without_eviction(tmp_path):
+    existing = build_result(["value"], [["kept"]])
+    existing_payload = serialize_json(existing).encode("utf-8")
+    oversized = build_result(["value"], [["x" * 100]])
+    oversized_payload = serialize_json(oversized).encode("utf-8")
+    store = make_store(
+        tmp_path,
+        max_file_bytes=0,
+        max_store_bytes=len(existing_payload),
+    )
+    existing_summary = store.store(existing, existing_payload)
+
+    with pytest.raises(ValueError, match="MSSQL_RESULT_MAX_STORE_BYTES"):
+        store.store(oversized, oversized_payload)
+
+    assert stored_path(tmp_path, existing_summary).exists()
 
 
 def test_large_single_cell_is_not_leaked_in_preview(tmp_path):
@@ -384,7 +470,7 @@ def test_page_argument_validation(tmp_path, offset, limit):
 def test_expired_results_cannot_be_read(tmp_path):
     store = make_store(tmp_path, ttl_seconds=1)
     _, _, summary = persist(store, [[1, "value"]])
-    result_path = Path(summary["result_path"])
+    result_path = stored_path(tmp_path, summary)
     old_time = time.time() - 10
     os.utime(result_path, (old_time, old_time))
 
@@ -395,7 +481,7 @@ def test_expired_results_cannot_be_read(tmp_path):
 def test_corrupt_result_is_rejected_by_row_reader(tmp_path):
     store = make_store(tmp_path)
     _, _, summary = persist(store, [[1, "value"]])
-    Path(summary["result_path"]).write_text("not-json", encoding="utf-8")
+    stored_path(tmp_path, summary).write_text("not-json", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="corrupt"):
         store.read_page(summary["result_id"])

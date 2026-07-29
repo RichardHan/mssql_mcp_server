@@ -18,7 +18,6 @@ def test_measure_context_reports_before_and_after_for_240_rows():
         "row_count": 240,
         "stored": True,
         "result_id": "0" * 32,
-        "result_path": "/var/lib/mssql-results/0.json",
         "preview_rows": [],
         "truncated": False,
     }
@@ -38,7 +37,6 @@ def test_measure_context_reports_large_definition_savings():
         "row_count": 1,
         "stored": True,
         "result_id": "1" * 32,
-        "result_path": "/var/lib/mssql-results/1.json",
         "preview_rows": [],
         "truncated": False,
     }

@@ -20,6 +20,10 @@ def store_result(result_dir: Path, envelope: dict) -> dict:
     return store.store(envelope, payload)
 
 
+def stored_path(result_dir: Path, summary: dict) -> Path:
+    return result_dir / f'{summary["result_id"]}.json'
+
+
 def test_file_loader_preserves_unicode_commas_and_crlf(tmp_path):
     envelope = build_result(
         ["key_columns", "definition", "nullable"],
@@ -131,7 +135,7 @@ def test_stored_loader_rejects_corrupt_result(tmp_path, monkeypatch):
     result_dir = tmp_path / "results"
     envelope = build_result(["id"], [[1]])
     summary = store_result(result_dir, envelope)
-    Path(summary["result_path"]).write_text("not-json", encoding="utf-8")
+    stored_path(result_dir, summary).write_text("not-json", encoding="utf-8")
     monkeypatch.setenv("MSSQL_RESULT_TTL_SECONDS", "0")
 
     with pytest.raises(RuntimeError, match="corrupt"):
@@ -143,7 +147,7 @@ def test_directory_override_honors_configured_ttl(tmp_path, monkeypatch):
     envelope = build_result(["id"], [[1]])
     summary = store_result(result_dir, envelope)
     old_time = time.time() - 10
-    os.utime(summary["result_path"], (old_time, old_time))
+    os.utime(stored_path(result_dir, summary), (old_time, old_time))
     monkeypatch.setenv("MSSQL_RESULT_TTL_SECONDS", "1")
 
     with pytest.raises(FileNotFoundError, match="expired"):
