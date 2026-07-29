@@ -1,11 +1,10 @@
 """Integration tests for MCP protocol communication and end-to-end functionality."""
-import pytest
 import asyncio
-import json
-from unittest.mock import Mock, patch, AsyncMock
-from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Resource, Tool
-from mssql_mcp_server.server import app
+from unittest.mock import Mock, patch
+
+import pytest
+from handler_adapter import app
+from mcp.types import Resource, TextContent
 
 
 class TestMCPProtocolIntegration:
@@ -23,10 +22,6 @@ class TestMCPProtocolIntegration:
     @pytest.mark.asyncio
     async def test_full_mcp_lifecycle(self):
         """Test complete MCP server lifecycle from init to shutdown."""
-        # Mock the stdio streams
-        mock_read_stream = AsyncMock()
-        mock_write_stream = AsyncMock()
-        
         # Mock database connection
         mock_conn = Mock()
         mock_cursor = Mock()
@@ -132,7 +127,8 @@ class TestDatabaseIntegration:
         mock_cursor = Mock()
         mock_conn.cursor.return_value = mock_cursor
         mock_cursor.rowcount = 1
-        
+        mock_cursor.description = None  # INSERT returns no rowset
+
         with patch('pymssql.connect', return_value=mock_conn):
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',

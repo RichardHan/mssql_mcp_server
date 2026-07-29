@@ -1,13 +1,13 @@
 """Performance and load tests for production readiness."""
-import pytest
 import asyncio
+import gc
+import os
 import time
 from unittest.mock import Mock, patch
-from concurrent.futures import ThreadPoolExecutor
-import gc
+
 import psutil
-import os
-from mssql_mcp_server.server import app
+import pytest
+from handler_adapter import app
 
 
 class TestPerformance:

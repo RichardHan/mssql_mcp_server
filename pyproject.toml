@@ -33,6 +33,10 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 mssql_mcp_server = "mssql_mcp_server:main"
+export-sql-result = "mssql_mcp_server.result_export:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mssql_mcp_server"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["BLE001", "E722", "S110", "SIM117"]

@@ -1,7 +1,9 @@
 """Test database configuration and environment variable handling."""
-import pytest
 import os
 from unittest.mock import patch
+
+import pytest
+
 from mssql_mcp_server.server import get_db_config, validate_table_name
 
 
@@ -20,8 +22,8 @@ class TestDatabaseConfiguration:
             assert config['user'] == 'testuser'
             assert config['password'] == 'testpass'
             assert config['database'] == 'testdb'
-            assert 'port' not in config
-    
+            assert config['port'] == '1433'
+
     def test_custom_server_and_port(self):
         """Test custom server and port configuration."""
         with patch.dict(os.environ, {
@@ -44,7 +46,7 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert 'port' not in config  # Invalid port should be ignored
+            assert config['port'] == '1433'  # Invalid value falls back to default
     
     def test_azure_sql_configuration(self):
         """Test Azure SQL automatic encryption configuration."""
@@ -55,7 +57,7 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == True
+            assert config['server'].endswith(';Encrypt=yes;TrustServerCertificate=no')
             assert config['tds_version'] == '7.4'
     
     def test_localdb_configuration(self):
@@ -108,8 +110,9 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == True
-        
+            assert config['server'].endswith(';Encrypt=yes;TrustServerCertificate=yes')
+            assert config['tds_version'] == '7.4'
+
         # Non-Azure without encryption (default)
         with patch.dict(os.environ, {
             'MSSQL_SERVER': 'localhost',
@@ -118,7 +121,8 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == False
+            assert config['server'] == 'localhost'
+            assert 'tds_version' not in config
 
 
 class TestTableNameValidation:

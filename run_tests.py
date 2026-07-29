@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Comprehensive test runner for MSSQL MCP Server."""
 
-import sys
-import subprocess
 import argparse
-from pathlib import Path
+import subprocess
+import sys
+
 
 def run_command(cmd, description):
     """Run a command and handle output."""
@@ -13,7 +13,7 @@ def run_command(cmd, description):
     print(f"Command: {' '.join(cmd)}")
     print('='*60)
     
-    result = subprocess.run(cmd, capture_output=False)
+    result = subprocess.run(cmd, capture_output=False, check=False)
     if result.returncode != 0:
         print(f"❌ {description} failed with return code {result.returncode}")
         return False
@@ -57,7 +57,9 @@ def main():
     if args.suite in ['all', 'unit']:
         # Unit tests
         print("\n🧪 Running unit tests...")
-        cmd = pytest_cmd + ['tests/test_config.py', 'tests/test_server.py']
+        cmd = pytest_cmd + ['tests/test_config.py', 'tests/test_server.py',
+                            'tests/test_serialization.py', 'tests/test_result_store.py',
+                            'tests/test_result_export.py', 'tests/test_context_benchmark.py']
         if not run_command(cmd, "Unit tests"):
             success = False
     
@@ -80,7 +82,8 @@ def main():
     if args.suite in ['all', 'integration']:
         # Integration tests
         print("\n🔗 Running integration tests...")
-        cmd = pytest_cmd + ['tests/test_integration.py', 'tests/test_error_handling.py']
+        cmd = pytest_cmd + ['tests/test_integration.py', 'tests/test_error_handling.py',
+                            'tests/test_query_results.py']
         if not run_command(cmd, "Integration tests"):
             success = False
     
