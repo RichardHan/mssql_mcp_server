@@ -78,3 +78,5 @@ ehthumbs.db
 # MCP specific
 mcp-workspace/
 
+# Claude local settings
+.claude/
