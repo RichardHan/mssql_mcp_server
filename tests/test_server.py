@@ -1,6 +1,15 @@
 import pytest
+from unittest.mock import patch
 from mssql_mcp_server.server import app, list_tools, list_resources, read_resource, call_tool
-from pydantic import AnyUrl
+from mcp.types import CallToolRequestParams, ReadResourceRequestParams
+
+# call_tool reads get_db_config() first, so a minimal valid config must be present
+# for the name/query validation branches to be reached.
+_TEST_DB_ENV = {
+    "MSSQL_USER": "test",
+    "MSSQL_PASSWORD": "test",
+    "MSSQL_DATABASE": "testdb",
+}
 
 def test_server_initialization():
     """Test that the server initializes correctly."""
@@ -9,22 +18,26 @@ def test_server_initialization():
 @pytest.mark.asyncio
 async def test_list_tools():
     """Test that list_tools returns expected tools."""
-    tools = await list_tools()
-    assert len(tools) == 1
-    assert tools[0].name == "execute_sql"
-    assert "query" in tools[0].inputSchema["properties"]
+    result = await list_tools(None, None)
+    assert len(result.tools) == 1
+    assert result.tools[0].name == "execute_sql"
+    assert "query" in result.tools[0].input_schema["properties"]
 
 @pytest.mark.asyncio
 async def test_call_tool_invalid_name():
     """Test calling a tool with an invalid name."""
-    with pytest.raises(ValueError, match="Unknown tool"):
-        await call_tool("invalid_tool", {})
+    with patch.dict("os.environ", _TEST_DB_ENV):
+        result = await call_tool(None, CallToolRequestParams(name="invalid_tool", arguments={}))
+    assert result.is_error is True
+    assert "Unknown tool" in result.content[0].text
 
 @pytest.mark.asyncio
 async def test_call_tool_missing_query():
     """Test calling execute_sql without a query."""
-    with pytest.raises(ValueError, match="Query is required"):
-        await call_tool("execute_sql", {})
+    with patch.dict("os.environ", _TEST_DB_ENV):
+        result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={}))
+    assert result.is_error is True
+    assert "Query is required" in result.content[0].text
 
 # Skip database-dependent tests if no database connection
 @pytest.mark.asyncio
@@ -38,8 +51,8 @@ async def test_call_tool_missing_query():
 async def test_list_resources():
     """Test listing resources (requires database connection)."""
     try:
-        resources = await list_resources()
-        assert isinstance(resources, list)
+        result = await list_resources(None, None)
+        assert isinstance(result.resources, list)
     except ValueError as e:
         if "Missing required database configuration" in str(e):
             pytest.skip("Database configuration not available")

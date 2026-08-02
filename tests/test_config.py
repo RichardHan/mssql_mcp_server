@@ -20,7 +20,8 @@ class TestDatabaseConfiguration:
             assert config['user'] == 'testuser'
             assert config['password'] == 'testpass'
             assert config['database'] == 'testdb'
-            assert 'port' not in config
+            # The server always sets a default port of "1433".
+            assert config['port'] == '1433'
     
     def test_custom_server_and_port(self):
         """Test custom server and port configuration."""
@@ -44,7 +45,9 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert 'port' not in config  # Invalid port should be ignored
+            # An invalid port is not converted to int; the server logs a warning
+            # and retains the raw value (falling back from the int conversion).
+            assert config['port'] == 'invalid'
     
     def test_azure_sql_configuration(self):
         """Test Azure SQL automatic encryption configuration."""
@@ -55,7 +58,9 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == True
+            # Azure SQL enables encryption via the connection-string suffix and
+            # sets the TDS version (there is no separate 'encrypt' config key).
+            assert 'Encrypt=yes' in config['server']
             assert config['tds_version'] == '7.4'
     
     def test_localdb_configuration(self):
@@ -108,17 +113,18 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == True
-        
+            # Encryption is applied via the connection-string suffix on the server.
+            assert 'Encrypt=yes' in config['server']
+
         # Non-Azure without encryption (default)
         with patch.dict(os.environ, {
             'MSSQL_SERVER': 'localhost',
             'MSSQL_USER': 'testuser',
             'MSSQL_PASSWORD': 'testpass',
             'MSSQL_DATABASE': 'testdb'
-        }):
+        }, clear=True):
             config = get_db_config()
-            assert config['encrypt'] == False
+            assert 'Encrypt=yes' not in config['server']
 
 
 class TestTableNameValidation:

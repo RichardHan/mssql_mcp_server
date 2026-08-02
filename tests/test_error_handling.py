@@ -2,7 +2,8 @@
 import pytest
 import asyncio
 from unittest.mock import Mock, patch, PropertyMock
-from mssql_mcp_server.server import app, get_db_config
+from mssql_mcp_server.server import app, get_db_config, list_resources, read_resource, call_tool
+from mcp.types import CallToolRequestParams, ReadResourceRequestParams
 import pymssql
 
 
@@ -20,8 +21,8 @@ class TestConnectionErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                resources = await app.list_resources()
-                assert resources == []  # Should return empty list on connection failure
+                result = await list_resources(None, None)
+                assert result.resources == []  # Should return empty list on connection failure
     
     @pytest.mark.asyncio
     async def test_authentication_failure(self):
@@ -34,9 +35,9 @@ class TestConnectionErrors:
                 'MSSQL_PASSWORD': 'wrong_password',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                resources = await app.list_resources()
-                assert resources == []
-    
+                result = await list_resources(None, None)
+                assert result.resources == []
+
     @pytest.mark.asyncio
     async def test_database_not_found(self):
         """Test handling when database doesn't exist."""
@@ -48,9 +49,9 @@ class TestConnectionErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'nonexistent'
             }):
-                resources = await app.list_resources()
-                assert resources == []
-    
+                result = await list_resources(None, None)
+                assert result.resources == []
+
     @pytest.mark.asyncio
     async def test_network_disconnection(self):
         """Test handling of network disconnections during query."""
@@ -67,10 +68,13 @@ class TestConnectionErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
-                assert "Error executing query" in result[0].text
-                
-                # Ensure cleanup attempted
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT * FROM users"}))
+                # v2 catches the DB error and returns it as an error result
+                # rather than raising.
+                assert result.is_error is True
+                assert "Error executing query" in result.content[0].text
+
+                # Ensure cleanup attempted even on error (try/finally in server).
                 mock_cursor.close.assert_called()
                 mock_conn.close.assert_called()
 
@@ -93,9 +97,9 @@ class TestQueryErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {"query": "SELCT * FROM users"})
-                assert "Error executing query" in result[0].text
-                assert len(result) == 1
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELCT * FROM users"}))
+                assert "Error executing query" in result.content[0].text
+                assert len(result.content) == 1
     
     @pytest.mark.asyncio
     async def test_permission_denied(self):
@@ -112,8 +116,8 @@ class TestQueryErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM sensitive_table"})
-                assert "Error executing query" in result[0].text
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT * FROM sensitive_table"}))
+                assert "Error executing query" in result.content[0].text
     
     @pytest.mark.asyncio
     async def test_deadlock_handling(self):
@@ -130,10 +134,10 @@ class TestQueryErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={
                     "query": "UPDATE users SET status = 'active'"
-                })
-                assert "Error executing query" in result[0].text
+                }))
+                assert "Error executing query" in result.content[0].text
 
 
 class TestResourceErrors:
@@ -142,8 +146,6 @@ class TestResourceErrors:
     @pytest.mark.asyncio
     async def test_invalid_uri_format(self):
         """Test handling of invalid resource URIs."""
-        from pydantic import AnyUrl
-        
         with patch.dict('os.environ', {
             'MSSQL_USER': 'test',
             'MSSQL_PASSWORD': 'test',
@@ -151,7 +153,7 @@ class TestResourceErrors:
         }):
             # Test invalid URI scheme
             with pytest.raises(ValueError, match="Invalid URI scheme"):
-                await app.read_resource(AnyUrl("http://invalid/uri"))
+                await read_resource(None, ReadResourceRequestParams(uri="http://invalid/uri"))
     
     @pytest.mark.asyncio
     async def test_table_not_found(self):
@@ -168,9 +170,8 @@ class TestResourceErrors:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                from pydantic import AnyUrl
-                with pytest.raises(RuntimeError, match="Database error"):
-                    await app.read_resource(AnyUrl("mssql://nonexistent/data"))
+                result = await read_resource(None, ReadResourceRequestParams(uri="mssql://nonexistent/data"))
+                assert "Error reading resource" in result.contents[0].text
 
 
 class TestRecoveryScenarios:
@@ -200,15 +201,15 @@ class TestRecoveryScenarios:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 # First two calls should fail
-                resources1 = await app.list_resources()
-                assert resources1 == []
-                
-                resources2 = await app.list_resources()
-                assert resources2 == []
-                
+                result1 = await list_resources(None, None)
+                assert result1.resources == []
+
+                result2 = await list_resources(None, None)
+                assert result2.resources == []
+
                 # Third call should succeed
-                resources3 = await app.list_resources()
-                assert len(resources3) == 1
+                result3 = await list_resources(None, None)
+                assert len(result3.resources) == 1
     
     @pytest.mark.asyncio
     async def test_partial_result_handling(self):
@@ -232,9 +233,8 @@ class TestRecoveryScenarios:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 # Should handle the error gracefully
-                from pydantic import AnyUrl
-                with pytest.raises(RuntimeError):
-                    await app.read_resource(AnyUrl("mssql://users/data"))
+                result = await read_resource(None, ReadResourceRequestParams(uri="mssql://users/data"))
+                assert "Error reading resource" in result.contents[0].text
     
     @pytest.mark.asyncio
     async def test_long_running_query_handling(self):
@@ -258,10 +258,10 @@ class TestRecoveryScenarios:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 # Should complete without timeout
-                result = await app.call_tool("execute_sql", {
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={
                     "query": "SELECT COUNT(*) FROM large_table"
-                })
-                assert "1" in result[0].text
+                }))
+                assert "1" in result.content[0].text
 
 
 class TestMemoryAndResourceManagement:
@@ -282,12 +282,17 @@ class TestMemoryAndResourceManagement:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
-                
-                # Cursor should be closed despite error
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT * FROM users"}))
+
+                # v2 catches the error and returns an error result instead of
+                # raising, so the failure is surfaced as content.
+                assert result.is_error is True
+                assert "Error executing query" in result.content[0].text
+
+                # Cursor and connection should be closed despite the error.
                 mock_cursor.close.assert_called()
                 mock_conn.close.assert_called()
-    
+
     @pytest.mark.asyncio
     async def test_connection_cleanup_on_exception(self):
         """Ensure connections are closed on exceptions."""
@@ -304,8 +309,10 @@ class TestMemoryAndResourceManagement:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                resources = await app.list_resources()
-                assert resources == []
-                
-                # Connection should still be closed
+                result = await list_resources(None, None)
+                # v2 catches the error and returns an empty resource list rather
+                # than raising.
+                assert result.resources == []
+
+                # Connection should still be closed even though cursor creation failed.
                 mock_conn.close.assert_called()

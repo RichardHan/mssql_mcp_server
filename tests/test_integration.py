@@ -4,8 +4,8 @@ import asyncio
 import json
 from unittest.mock import Mock, patch, AsyncMock
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Resource, Tool
-from mssql_mcp_server.server import app
+from mcp.types import TextContent, Resource, Tool, CallToolRequestParams, ReadResourceRequestParams
+from mssql_mcp_server.server import app, list_resources, list_tools, call_tool
 
 
 class TestMCPProtocolIntegration:
@@ -40,26 +40,26 @@ class TestMCPProtocolIntegration:
             }):
                 # Test resource listing
                 mock_cursor.fetchall.return_value = [('users',), ('products',)]
-                resources = await app.list_resources()
-                
-                assert len(resources) == 2
-                assert all(isinstance(r, Resource) for r in resources)
-                assert resources[0].name == "Table: users"
-                assert resources[1].name == "Table: products"
-                
+                resources_result = await list_resources(None, None)
+
+                assert len(resources_result.resources) == 2
+                assert all(isinstance(r, Resource) for r in resources_result.resources)
+                assert resources_result.resources[0].name == "Table: users"
+                assert resources_result.resources[1].name == "Table: products"
+
                 # Test tool listing
-                tools = await app.list_tools()
-                assert len(tools) == 1
-                assert tools[0].name == "execute_sql"
-                
+                tools_result = await list_tools(None, None)
+                assert len(tools_result.tools) == 1
+                assert tools_result.tools[0].name == "execute_sql"
+
                 # Test tool execution
                 mock_cursor.description = [('count',)]
                 mock_cursor.fetchall.return_value = [(42,)]
-                result = await app.call_tool("execute_sql", {"query": "SELECT COUNT(*) FROM users"})
-                
-                assert len(result) == 1
-                assert isinstance(result[0], TextContent)
-                assert "42" in result[0].text
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT COUNT(*) FROM users"}))
+
+                assert len(result.content) == 1
+                assert isinstance(result.content[0], TextContent)
+                assert "42" in result.content[0].text
     
     @pytest.mark.asyncio
     async def test_concurrent_requests(self):
@@ -78,13 +78,13 @@ class TestMCPProtocolIntegration:
                 mock_cursor.fetchall.return_value = [('table1',), ('table2',)]
                 
                 # Run multiple concurrent requests
-                tasks = [app.list_resources() for _ in range(10)]
+                tasks = [list_resources(None, None) for _ in range(10)]
                 results = await asyncio.gather(*tasks)
-                
+
                 # All should succeed
                 assert len(results) == 10
                 for result in results:
-                    assert len(result) == 2
+                    assert len(result.resources) == 2
     
     @pytest.mark.asyncio
     async def test_error_propagation(self):
@@ -92,7 +92,7 @@ class TestMCPProtocolIntegration:
         with patch.dict('os.environ', {}, clear=True):
             # Missing configuration should raise error
             with pytest.raises(ValueError, match="Missing required database configuration"):
-                await app.list_resources()
+                await list_resources(None, None)
 
 
 class TestDatabaseIntegration:
@@ -121,8 +121,8 @@ class TestDatabaseIntegration:
                 # Multiple operations should create multiple connections
                 # (current implementation doesn't pool)
                 for _ in range(5):
-                    await app.list_resources()
-                
+                    await list_resources(None, None)
+
                 assert call_count == 5  # One connection per operation
     
     @pytest.mark.asyncio
@@ -140,13 +140,13 @@ class TestDatabaseIntegration:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 # Test INSERT operation
-                result = await app.call_tool("execute_sql", {
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={
                     "query": "INSERT INTO users (name) VALUES ('test')"
-                })
-                
+                }))
+
                 # Verify commit was called
                 mock_conn.commit.assert_called_once()
-                assert "Rows affected: 1" in result[0].text
+                assert "Rows affected: 1" in result.content[0].text
     
     @pytest.mark.asyncio
     async def test_connection_cleanup(self):
@@ -165,7 +165,7 @@ class TestDatabaseIntegration:
                 mock_cursor.execute.side_effect = Exception("Query failed")
                 
                 try:
-                    await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+                    await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT * FROM users"}))
                 except:
                     pass
                 
@@ -190,9 +190,9 @@ class TestEdgeCases:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                resources = await app.list_resources()
-                assert resources == []
-    
+                result = await list_resources(None, None)
+                assert result.resources == []
+
     @pytest.mark.asyncio
     async def test_large_result_set(self):
         """Test handling of large query results."""
@@ -211,14 +211,14 @@ class TestEdgeCases:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={
                     "query": "SELECT * FROM users"
-                })
-                
+                }))
+
                 # Should handle large results gracefully
-                assert len(result) == 1
-                assert isinstance(result[0].text, str)
-                assert len(result[0].text.split('\n')) == 10001  # Header + 10000 rows
+                assert len(result.content) == 1
+                assert isinstance(result.content[0].text, str)
+                assert len(result.content[0].text.split('\n')) == 10001  # Header + 10000 rows
     
     @pytest.mark.asyncio
     async def test_special_characters_in_data(self):
@@ -243,12 +243,12 @@ class TestEdgeCases:
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
             }):
-                result = await app.call_tool("execute_sql", {
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={
                     "query": "SELECT data FROM test_table"
-                })
-                
+                }))
+
                 # Should handle special characters properly
-                assert len(result) == 1
-                text = result[0].text
+                assert len(result.content) == 1
+                text = result.content[0].text
                 assert 'Hello, "World"' in text
                 assert 'None' in text  # None should be converted to string

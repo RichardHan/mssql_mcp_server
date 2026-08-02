@@ -7,7 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 import gc
 import psutil
 import os
-from mssql_mcp_server.server import app
+from mssql_mcp_server.server import app, list_resources, call_tool
+from mcp.types import CallToolRequestParams
 
 
 class TestPerformance:
@@ -31,13 +32,13 @@ class TestPerformance:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 start_time = time.time()
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT * FROM users"}))
                 end_time = time.time()
-                
+
                 # Query should complete in reasonable time (< 1 second for mock)
                 assert end_time - start_time < 1.0
-                assert len(result) == 1
-                assert "user_99" in result[0].text
+                assert len(result.content) == 1
+                assert "user_99" in result.content[0].text
     
     @pytest.mark.asyncio
     async def test_concurrent_query_performance(self):
@@ -58,15 +59,15 @@ class TestPerformance:
                 # Run 50 concurrent queries
                 start_time = time.time()
                 tasks = [
-                    app.call_tool("execute_sql", {"query": f"SELECT COUNT(*) FROM table_{i}"})
+                    call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": f"SELECT COUNT(*) FROM table_{i}"}))
                     for i in range(50)
                 ]
                 results = await asyncio.gather(*tasks)
                 end_time = time.time()
-                
+
                 # All queries should complete
                 assert len(results) == 50
-                assert all("42" in r[0].text for r in results)
+                assert all("42" in r.content[0].text for r in results)
                 
                 # Should complete in reasonable time (< 5 seconds for 50 queries)
                 assert end_time - start_time < 5.0
@@ -90,12 +91,12 @@ class TestPerformance:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 start_time = time.time()
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM large_table"})
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT * FROM large_table"}))
                 end_time = time.time()
-                
+
                 # Should handle large results efficiently
-                assert len(result) == 1
-                lines = result[0].text.split('\n')
+                assert len(result.content) == 1
+                lines = result.content[0].text.split('\n')
                 assert len(lines) == 10001  # Header + 10000 rows
                 
                 # Should complete in reasonable time (< 10 seconds)
@@ -131,7 +132,7 @@ class TestMemoryUsage:
                 
                 # Run many operations
                 for _ in range(100):
-                    await app.list_resources()
+                    await list_resources(None, None)
                 
                 # Check memory after operations
                 gc.collect()
@@ -163,10 +164,10 @@ class TestMemoryUsage:
                 'MSSQL_DATABASE': 'testdb'
             }):
                 # Should handle large data without excessive memory use
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM big_table"})
-                
+                result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT * FROM big_table"}))
+
                 # Result should be created
-                assert len(result) == 1
+                assert len(result.content) == 1
                 
                 # Memory should be released after operation
                 result = None
@@ -196,7 +197,7 @@ class TestLoadHandling:
                 start_time = time.time()
                 tasks = []
                 for _ in range(100):
-                    tasks.append(app.call_tool("execute_sql", {"query": "SELECT 1"}))
+                    tasks.append(call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT 1"})))
                 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 end_time = time.time()
@@ -233,9 +234,9 @@ class TestLoadHandling:
                 
                 while time.time() - start_time < 10:
                     try:
-                        result = await app.call_tool("execute_sql", {"query": "SELECT 'ok'"})
+                        result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": "SELECT 'ok'"}))
                         request_count += 1
-                        assert "ok" in result[0].text
+                        assert "ok" in result.content[0].text
                     except Exception:
                         error_count += 1
                     
@@ -272,10 +273,10 @@ class TestScalability:
                     mock_cursor.fetchall.return_value = tables
                     
                     start_time = time.time()
-                    resources = await app.list_resources()
+                    result = await list_resources(None, None)
                     end_time = time.time()
-                    
-                    assert len(resources) == count
+
+                    assert len(result.resources) == count
                     
                     # Time should scale reasonably (not exponentially)
                     time_per_table = (end_time - start_time) / count
@@ -312,11 +313,11 @@ class TestScalability:
                 
                 for query in queries:
                     start_time = time.time()
-                    result = await app.call_tool("execute_sql", {"query": query})
+                    result = await call_tool(None, CallToolRequestParams(name="execute_sql", arguments={"query": query}))
                     end_time = time.time()
-                    
+
                     # All queries should complete successfully
-                    assert len(result) == 1
+                    assert len(result.content) == 1
                     
                     # Response time should be reasonable
                     assert end_time - start_time < 2.0
