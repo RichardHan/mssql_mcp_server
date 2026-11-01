@@ -11,7 +11,7 @@ async def test_list_tools():
     """Test that list_tools returns expected tools."""
     tools = await list_tools()
     assert len(tools) == 1
-    assert tools[0].name == "execute_sql"
+    assert tools[0].name == "query"
     assert "query" in tools[0].inputSchema["properties"]
 
 @pytest.mark.asyncio
@@ -22,9 +22,9 @@ async def test_call_tool_invalid_name():
 
 @pytest.mark.asyncio
 async def test_call_tool_missing_query():
-    """Test calling execute_sql without a query."""
+    """Test calling query without a query."""
     with pytest.raises(ValueError, match="Query is required"):
-        await call_tool("execute_sql", {})
+        await call_tool("query", {})
 
 # Skip database-dependent tests if no database connection
 @pytest.mark.asyncio
