@@ -12,7 +12,7 @@ A Model Context Protocol (MCP) server for secure SQL Server database access thro
 ## Features
 
 - 🔍 List database tables
-- 📊 Execute SQL queries (SELECT, INSERT, UPDATE, DELETE)
+- 📊 Execute SQL queries (read-only by default; optional write mode)
 - 🔐 Multiple authentication methods (SQL, Windows, Azure AD)
 - 🏢 LocalDB and Azure SQL support
 - 🔌 Custom port configuration
@@ -28,7 +28,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "mssql": {
       "command": "uvx",
-      "args": ["microsoft_sql_server_mcp"],
+      "args": ["--from", "microsoft-sql-server-mcp", "mssql_mcp_server"],
       "env": {
         "MSSQL_SERVER": "localhost",
         "MSSQL_DATABASE": "your_database",
@@ -69,9 +69,17 @@ MSSQL_PASSWORD=your_password
 ### Optional Settings
 ```bash
 MSSQL_PORT=1433                 # Custom port (default: 1433)
-MSSQL_ENCRYPT=true              # Force encryption
+MSSQL_ENCRYPT=true              # Force encryption (uses pymssql `encryption=require`)
+MSSQL_TRUST_SERVER_CERTIFICATE=true  # Trust SQL Server TLS cert (default: true for non-Azure encrypt, false for Azure)
 MSSQL_QUERY_TIMEOUT=300         # Query timeout in seconds (default: 300). Queries exceeding this limit are automatically terminated.
+MSSQL_ALLOW_WRITES=1            # Allow INSERT/UPDATE/DELETE; tool name becomes execute_sql (default: read-only `query` tool)
+MSSQL_COMMAND=query             # Optional override for the MCP tool name
 ```
+
+### Read-only vs write mode
+
+By default the server exposes a **`query`** tool that only accepts `SELECT` / `WITH` statements and sets `readOnlyHint` (so Cursor Ask mode can use it). Set `MSSQL_ALLOW_WRITES=1` to expose **`execute_sql`** and allow writes. Prefer a read-only SQL login for the default mode.
+
 
 ## Alternative Installation Methods
 

@@ -1,6 +1,6 @@
 [project]
 name = "microsoft_sql_server_mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Model Context Protocol (MCP) server that enables secure interaction with Microsoft SQL Server databases."
 readme = "README.md"
 requires-python = ">=3.11"
