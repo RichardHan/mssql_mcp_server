@@ -1,7 +1,9 @@
 """Test database configuration and environment variable handling."""
-import pytest
 import os
 from unittest.mock import patch
+
+import pytest
+
 from mssql_mcp_server.server import get_db_config, validate_table_name
 
 
@@ -11,9 +13,9 @@ class TestDatabaseConfiguration:
     def test_default_configuration(self):
         """Test default configuration values."""
         with patch.dict(os.environ, {
-            'MSSQL_USER': 'testuser',
-            'MSSQL_PASSWORD': 'testpass',
-            'MSSQL_DATABASE': 'testdb'
+                'MSSQL_USER': 'testuser',
+                'MSSQL_PASSWORD': 'testpass',
+                'MSSQL_DATABASE': 'testdb'
         }, clear=True):
             config = get_db_config()
             assert config['server'] == 'localhost'
@@ -28,11 +30,11 @@ class TestDatabaseConfiguration:
     def test_custom_server_and_port(self):
         """Test custom server and port configuration."""
         with patch.dict(os.environ, {
-            'MSSQL_SERVER': 'custom-server.com',
-            'MSSQL_PORT': '1433',
-            'MSSQL_USER': 'testuser',
-            'MSSQL_PASSWORD': 'testpass',
-            'MSSQL_DATABASE': 'testdb'
+                'MSSQL_SERVER': 'custom-server.com',
+                'MSSQL_PORT': '1433',
+                'MSSQL_USER': 'testuser',
+                'MSSQL_PASSWORD': 'testpass',
+                'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
             assert config['server'] == 'custom-server.com'
@@ -41,10 +43,10 @@ class TestDatabaseConfiguration:
     def test_invalid_port(self):
         """Test invalid port handling."""
         with patch.dict(os.environ, {
-            'MSSQL_PORT': 'invalid',
-            'MSSQL_USER': 'testuser',
-            'MSSQL_PASSWORD': 'testpass',
-            'MSSQL_DATABASE': 'testdb'
+                'MSSQL_PORT': 'invalid',
+                'MSSQL_USER': 'testuser',
+                'MSSQL_PASSWORD': 'testpass',
+                'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
             assert 'port' not in config  # Invalid port should be ignored
@@ -52,10 +54,10 @@ class TestDatabaseConfiguration:
     def test_azure_sql_configuration(self):
         """Test Azure SQL automatic encryption configuration."""
         with patch.dict(os.environ, {
-            'MSSQL_SERVER': 'myserver.database.windows.net',
-            'MSSQL_USER': 'testuser',
-            'MSSQL_PASSWORD': 'testpass',
-            'MSSQL_DATABASE': 'testdb'
+                'MSSQL_SERVER': 'myserver.database.windows.net',
+                'MSSQL_USER': 'testuser',
+                'MSSQL_PASSWORD': 'testpass',
+                'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
             assert config['encryption'] == 'require'
@@ -68,9 +70,9 @@ class TestDatabaseConfiguration:
     def test_localdb_configuration(self):
         """Test LocalDB connection string conversion."""
         with patch.dict(os.environ, {
-            'MSSQL_SERVER': '(localdb)\\MSSQLLocalDB',
-            'MSSQL_DATABASE': 'testdb',
-            'MSSQL_WINDOWS_AUTH': 'true'
+                'MSSQL_SERVER': '(localdb)\\MSSQLLocalDB',
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_WINDOWS_AUTH': 'true'
         }):
             config = get_db_config()
             assert config['server'] == '.\\MSSQLLocalDB'
@@ -80,9 +82,9 @@ class TestDatabaseConfiguration:
     def test_windows_authentication(self):
         """Test Windows authentication configuration."""
         with patch.dict(os.environ, {
-            'MSSQL_SERVER': 'localhost',
-            'MSSQL_DATABASE': 'testdb',
-            'MSSQL_WINDOWS_AUTH': 'true'
+                'MSSQL_SERVER': 'localhost',
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_WINDOWS_AUTH': 'true'
         }):
             config = get_db_config()
             assert 'user' not in config
@@ -90,19 +92,23 @@ class TestDatabaseConfiguration:
     
     def test_missing_required_config_sql_auth(self):
         """Test missing required configuration for SQL authentication."""
-        with patch.dict(os.environ, {
-            'MSSQL_SERVER': 'localhost'
-        }, clear=True):
-            with pytest.raises(ValueError, match="Missing required database configuration"):
-                get_db_config()
+        with (
+            patch.dict(os.environ, {
+                'MSSQL_SERVER': 'localhost'
+            }, clear=True),
+            pytest.raises(ValueError, match="Missing required database configuration"),
+        ):
+            get_db_config()
     
     def test_missing_database_windows_auth(self):
         """Test missing database for Windows authentication."""
-        with patch.dict(os.environ, {
-            'MSSQL_WINDOWS_AUTH': 'true'
-        }, clear=True):
-            with pytest.raises(ValueError, match="Missing required database configuration"):
-                get_db_config()
+        with (
+            patch.dict(os.environ, {
+                'MSSQL_WINDOWS_AUTH': 'true'
+            }, clear=True),
+            pytest.raises(ValueError, match="Missing required database configuration"),
+        ):
+            get_db_config()
     
     def test_encryption_settings(self):
         """Test various encryption settings."""

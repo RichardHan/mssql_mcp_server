@@ -1,8 +1,10 @@
 """Tests for read-only vs write mode (MSSQL_ALLOW_WRITES)."""
 import os
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from mssql_mcp_server.server import allow_writes, list_tools, call_tool, is_select_query
+
+from mssql_mcp_server.server import allow_writes, call_tool, is_select_query, list_tools
 
 
 class TestAllowWrites:
@@ -64,18 +66,20 @@ class TestCallToolReadOnlyGate:
             "MSSQL_PASSWORD": "p",
             "MSSQL_DATABASE": "db",
         }
-        with patch.dict(os.environ, env, clear=True):
-            with patch("mssql_mcp_server.server.pymssql.connect") as mock_connect:
-                mock_cursor = MagicMock()
-                mock_cursor.description = [("id",)]
-                mock_cursor.fetchall.return_value = [(1,)]
-                mock_conn = MagicMock()
-                mock_conn.cursor.return_value = mock_cursor
-                mock_connect.return_value = mock_conn
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("mssql_mcp_server.server.pymssql.connect") as mock_connect,
+        ):
+            mock_cursor = MagicMock()
+            mock_cursor.description = [("id",)]
+            mock_cursor.fetchall.return_value = [(1,)]
+            mock_conn = MagicMock()
+            mock_conn.cursor.return_value = mock_cursor
+            mock_connect.return_value = mock_conn
 
-                result = await call_tool("query", {"query": "SELECT id FROM t"})
-                assert "read-only mode" not in result[0].text
-                mock_connect.assert_called_once()
+            result = await call_tool("query", {"query": "SELECT id FROM t"})
+            assert "read-only mode" not in result[0].text
+            mock_connect.assert_called_once()
 
     async def test_allows_insert_in_write_mode(self):
         env = {
@@ -84,14 +88,16 @@ class TestCallToolReadOnlyGate:
             "MSSQL_PASSWORD": "p",
             "MSSQL_DATABASE": "db",
         }
-        with patch.dict(os.environ, env, clear=True):
-            with patch("mssql_mcp_server.server.pymssql.connect") as mock_connect:
-                mock_cursor = MagicMock()
-                mock_cursor.rowcount = 1
-                mock_conn = MagicMock()
-                mock_conn.cursor.return_value = mock_cursor
-                mock_connect.return_value = mock_conn
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("mssql_mcp_server.server.pymssql.connect") as mock_connect,
+        ):
+            mock_cursor = MagicMock()
+            mock_cursor.rowcount = 1
+            mock_conn = MagicMock()
+            mock_conn.cursor.return_value = mock_cursor
+            mock_connect.return_value = mock_conn
 
-                result = await call_tool("execute_sql", {"query": "INSERT INTO t VALUES (1)"})
-                assert "Rows affected: 1" in result[0].text
-                mock_connect.assert_called_once()
+            result = await call_tool("execute_sql", {"query": "INSERT INTO t VALUES (1)"})
+            assert "Rows affected: 1" in result[0].text
+            mock_connect.assert_called_once()

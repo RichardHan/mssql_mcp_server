@@ -1,9 +1,11 @@
 """Security tests for SQL injection prevention and safe query handling."""
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
-from mssql_mcp_server.server import validate_table_name, read_resource, call_tool
-from pydantic import AnyUrl
 from mcp.types import TextContent
+from pydantic import AnyUrl
+
+from mssql_mcp_server.server import call_tool, read_resource
 
 
 class TestSQLInjectionPrevention:
@@ -20,9 +22,9 @@ class TestSQLInjectionPrevention:
         ]
         
         with patch.dict('os.environ', {
-            'MSSQL_USER': 'test',
-            'MSSQL_PASSWORD': 'test',
-            'MSSQL_DATABASE': 'test'
+                'MSSQL_USER': 'test',
+                'MSSQL_PASSWORD': 'test',
+                'MSSQL_DATABASE': 'test'
         }):
             for uri in malicious_uris:
                 with pytest.raises((ValueError, RuntimeError)):
@@ -36,23 +38,24 @@ class TestSQLInjectionPrevention:
         mock_conn = Mock()
         mock_conn.cursor.return_value = mock_cursor
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'test'
-            }):
-                # Test safe table read
-                uri = AnyUrl("mssql://users/data")
-                mock_cursor.description = [('id',), ('name',)]
-                mock_cursor.fetchall.return_value = [(1, 'John'), (2, 'Jane')]
+            }),
+        ):
+            uri = AnyUrl("mssql://users/data")
+            mock_cursor.description = [('id',), ('name',)]
+            mock_cursor.fetchall.return_value = [(1, 'John'), (2, 'Jane')]
                 
-                result = await read_resource(uri)
+            await read_resource(uri)
                 
-                # Verify the query was escaped properly
-                executed_query = mock_cursor.execute.call_args[0][0]
-                assert '[users]' in executed_query
-                assert 'SELECT TOP 100 * FROM [users]' == executed_query
+            # Verify the query was escaped properly
+            executed_query = mock_cursor.execute.call_args[0][0]
+            assert '[users]' in executed_query
+            assert 'SELECT TOP 100 * FROM [users]' == executed_query
     
     def test_parameterized_queries(self):
         """Ensure queries use parameters where user input is involved."""
@@ -60,7 +63,6 @@ class TestSQLInjectionPrevention:
         # The current implementation doesn't use parameterized queries for table names
         # because table names can't be parameterized in SQL
         # Instead, we validate and escape them
-        pass
     
     @pytest.mark.asyncio
     async def test_query_result_sanitization(self):
@@ -69,23 +71,24 @@ class TestSQLInjectionPrevention:
         mock_conn = Mock()
         mock_conn.cursor.return_value = mock_cursor
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'test'
-            }):
-                # Test that passwords or sensitive data aren't exposed in errors
-                mock_cursor.execute.side_effect = Exception("Login failed for user 'sa' with password 'secret123'")
+            }),
+        ):
+            mock_cursor.execute.side_effect = Exception("Login failed for user 'sa' with password 'secret123'")
                 
-                result = await call_tool("query", {"query": "SELECT * FROM users"})
+            result = await call_tool("query", {"query": "SELECT * FROM users"})
                 
-                # Verify sensitive info is not in the error message
-                assert isinstance(result, list)
-                assert len(result) == 1
-                assert isinstance(result[0], TextContent)
-                assert 'secret123' not in result[0].text
-                assert 'Error executing query' in result[0].text
+            # Verify sensitive info is not in the error message
+            assert isinstance(result, list)
+            assert len(result) == 1
+            assert isinstance(result[0], TextContent)
+            assert 'secret123' not in result[0].text
+            assert 'Error executing query' in result[0].text
 
 
 class TestInputValidation:
@@ -103,9 +106,9 @@ class TestInputValidation:
         ]
         
         with patch.dict('os.environ', {
-            'MSSQL_USER': 'test',
-            'MSSQL_PASSWORD': 'test',
-            'MSSQL_DATABASE': 'test'
+                'MSSQL_USER': 'test',
+                'MSSQL_PASSWORD': 'test',
+                'MSSQL_DATABASE': 'test'
         }):
             for invalid_input in invalid_inputs:
                 with pytest.raises(ValueError):
@@ -115,9 +118,9 @@ class TestInputValidation:
         """Test that environment variables are validated."""
         # Test with potentially dangerous environment values
         dangerous_values = {
-            'MSSQL_SERVER': 'localhost; exec xp_cmdshell "whoami"',
-            'MSSQL_DATABASE': 'test; DROP DATABASE test',
-            'MSSQL_USER': 'admin\'--',
+                'MSSQL_SERVER': 'localhost; exec xp_cmdshell "whoami"',
+                'MSSQL_DATABASE': 'test; DROP DATABASE test',
+                'MSSQL_USER': 'admin\'--',
         }
         
         with patch.dict('os.environ', dangerous_values):
@@ -144,19 +147,20 @@ class TestResourceAccessControl:
             ('products',),
         ]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'test'
-            }):
-                from mssql_mcp_server.server import list_resources
-                resources = await list_resources()
+            }),
+        ):
+            from mssql_mcp_server.server import list_resources
+            resources = await list_resources()
                 
-                # Verify system tables are filtered out (if implemented)
-                # Currently the query uses INFORMATION_SCHEMA which should only return user tables
-                resource_names = [r.name for r in resources]
-                assert len(resources) == 4  # All tables are returned currently
+            # Verify system tables are filtered out (if implemented)
+            # Currently the query uses INFORMATION_SCHEMA which should only return user tables
+            assert len(resources) == 4  # All tables are returned currently
     
     @pytest.mark.asyncio 
     async def test_query_permissions(self):
@@ -172,18 +176,20 @@ class TestResourceAccessControl:
         mock_conn = Mock()
         mock_conn.cursor.return_value = mock_cursor
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'test',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                for query in dangerous_queries:
-                    # The queries will be executed (current implementation doesn't block them)
-                    # but we ensure errors are handled gracefully
-                    mock_cursor.execute.side_effect = Exception("Permission denied")
-                    result = await call_tool("execute_sql", {"query": query})
+            }),
+        ):
+            for query in dangerous_queries:
+                # The queries will be executed (current implementation doesn't block them)
+                # but we ensure errors are handled gracefully
+                mock_cursor.execute.side_effect = Exception("Permission denied")
+                result = await call_tool("execute_sql", {"query": query})
                     
-                    assert len(result) == 1
-                    assert "Error executing query" in result[0].text
+                assert len(result) == 1
+                assert "Error executing query" in result[0].text
