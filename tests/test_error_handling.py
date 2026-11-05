@@ -1,10 +1,10 @@
 """Test error handling, resilience, and recovery scenarios."""
-import pytest
 import asyncio
-from unittest.mock import Mock, patch, PropertyMock
-from handler_adapter import app
-from mssql_mcp_server.server import get_db_config
+from unittest.mock import Mock, patch
+
 import pymssql
+import pytest
+from handler_adapter import app
 
 
 class TestConnectionErrors:
@@ -65,19 +65,21 @@ class TestConnectionErrors:
         # Simulate network error during query execution
         mock_cursor.execute.side_effect = pymssql.OperationalError("Network error")
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
-                assert "Error executing query" in result[0].text
+            }),
+        ):
+            result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+            assert "Error executing query" in result[0].text
                 
-                # Ensure cleanup attempted
-                mock_cursor.close.assert_called()
-                mock_conn.close.assert_called()
+            # Ensure cleanup attempted
+            mock_cursor.close.assert_called()
+            mock_conn.close.assert_called()
 
 
 class TestQueryErrors:
@@ -92,16 +94,18 @@ class TestQueryErrors:
         
         mock_cursor.execute.side_effect = pymssql.ProgrammingError("Incorrect syntax near 'SELCT'")
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                result = await app.call_tool("execute_sql", {"query": "SELCT * FROM users"})
-                assert "Error executing query" in result[0].text
-                assert len(result) == 1
+            }),
+        ):
+            result = await app.call_tool("execute_sql", {"query": "SELCT * FROM users"})
+            assert "Error executing query" in result[0].text
+            assert len(result) == 1
     
     @pytest.mark.asyncio
     async def test_permission_denied(self):
@@ -112,15 +116,17 @@ class TestQueryErrors:
         
         mock_cursor.execute.side_effect = pymssql.DatabaseError("The SELECT permission was denied")
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM sensitive_table"})
-                assert "Error executing query" in result[0].text
+            }),
+        ):
+            result = await app.call_tool("execute_sql", {"query": "SELECT * FROM sensitive_table"})
+            assert "Error executing query" in result[0].text
     
     @pytest.mark.asyncio
     async def test_deadlock_handling(self):
@@ -131,17 +137,19 @@ class TestQueryErrors:
         
         mock_cursor.execute.side_effect = pymssql.OperationalError("Transaction was deadlocked")
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                result = await app.call_tool("execute_sql", {
-                    "query": "UPDATE users SET status = 'active'"
-                })
-                assert "Error executing query" in result[0].text
+            }),
+        ):
+            result = await app.call_tool("execute_sql", {
+                "query": "UPDATE users SET status = 'active'"
+            })
+            assert "Error executing query" in result[0].text
 
 
 class TestResourceErrors:
@@ -152,14 +160,15 @@ class TestResourceErrors:
         """Test handling of invalid resource URIs."""
         from pydantic import AnyUrl
         
-        with patch.dict('os.environ', {
-            'MSSQL_USER': 'test',
-            'MSSQL_PASSWORD': 'test',
-            'MSSQL_DATABASE': 'testdb'
-        }):
-            # Test invalid URI scheme
-            with pytest.raises(ValueError, match="Invalid URI scheme"):
-                await app.read_resource(AnyUrl("http://invalid/uri"))
+        with (
+            patch.dict('os.environ', {
+                'MSSQL_USER': 'test',
+                'MSSQL_PASSWORD': 'test',
+                'MSSQL_DATABASE': 'testdb'
+            }),
+            pytest.raises(ValueError, match="Invalid URI scheme"),
+        ):
+            await app.read_resource(AnyUrl("http://invalid/uri"))
     
     @pytest.mark.asyncio
     async def test_table_not_found(self):
@@ -170,16 +179,18 @@ class TestResourceErrors:
         
         mock_cursor.execute.side_effect = pymssql.ProgrammingError("Invalid object name 'nonexistent'")
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                from pydantic import AnyUrl
-                with pytest.raises(RuntimeError, match="Database error"):
-                    await app.read_resource(AnyUrl("mssql://nonexistent/data"))
+            }),
+        ):
+            from pydantic import AnyUrl
+            with pytest.raises(RuntimeError, match="Database error"):
+                await app.read_resource(AnyUrl("mssql://nonexistent/data"))
 
 
 class TestRecoveryScenarios:
@@ -202,23 +213,24 @@ class TestRecoveryScenarios:
             mock_conn.cursor.return_value = mock_cursor
             return mock_conn
         
-        with patch('pymssql.connect', side_effect=mock_connect):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', side_effect=mock_connect),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                # First two calls should fail
-                resources1 = await app.list_resources()
-                assert resources1 == []
+            }),
+        ):
+            resources1 = await app.list_resources()
+            assert resources1 == []
                 
-                resources2 = await app.list_resources()
-                assert resources2 == []
+            resources2 = await app.list_resources()
+            assert resources2 == []
                 
-                # Third call should succeed
-                resources3 = await app.list_resources()
-                assert len(resources3) == 1
+            # Third call should succeed
+            resources3 = await app.list_resources()
+            assert len(resources3) == 1
     
     @pytest.mark.asyncio
     async def test_partial_result_handling(self):
@@ -235,17 +247,18 @@ class TestRecoveryScenarios:
         mock_cursor.fetchall = failing_fetchall
         mock_cursor.description = [('id',), ('name',)]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                # Should handle the error gracefully
-                from pydantic import AnyUrl
-                with pytest.raises(RuntimeError):
-                    await app.read_resource(AnyUrl("mssql://users/data"))
+            }),
+        ):
+            from pydantic import AnyUrl
+            with pytest.raises(RuntimeError):
+                await app.read_resource(AnyUrl("mssql://users/data"))
     
     @pytest.mark.asyncio
     async def test_long_running_query_handling(self):
@@ -256,24 +269,24 @@ class TestRecoveryScenarios:
         
         async def slow_execute(query):
             await asyncio.sleep(0.1)  # Simulate slow query
-            return None
         
         mock_cursor.execute = Mock(side_effect=lambda q: None)
         mock_cursor.fetchall.return_value = [(1,)]
         mock_cursor.description = [('count',)]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                # Should complete without timeout
-                result = await app.call_tool("execute_sql", {
-                    "query": "SELECT COUNT(*) FROM large_table"
-                })
-                assert "1" in result[0].text
+            }),
+        ):
+            result = await app.call_tool("execute_sql", {
+                "query": "SELECT COUNT(*) FROM large_table"
+            })
+            assert "1" in result[0].text
 
 
 class TestMemoryAndResourceManagement:
@@ -288,18 +301,20 @@ class TestMemoryAndResourceManagement:
         
         mock_cursor.execute.side_effect = Exception("Unexpected error")
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+            }),
+        ):
+            await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
                 
-                # Cursor should be closed despite error
-                mock_cursor.close.assert_called()
-                mock_conn.close.assert_called()
+            # Cursor should be closed despite error
+            mock_cursor.close.assert_called()
+            mock_conn.close.assert_called()
     
     @pytest.mark.asyncio
     async def test_connection_cleanup_on_exception(self):
@@ -311,15 +326,17 @@ class TestMemoryAndResourceManagement:
         # Make cursor creation fail after connection
         mock_conn.cursor.side_effect = Exception("Cursor creation failed")
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb',
                 'MSSQL_ALLOW_WRITES': '1',
-            }):
-                resources = await app.list_resources()
-                assert resources == []
+            }),
+        ):
+            resources = await app.list_resources()
+            assert resources == []
                 
-                # Connection should still be closed
-                mock_conn.close.assert_called()
+            # Connection should still be closed
+            mock_conn.close.assert_called()

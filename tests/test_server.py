@@ -1,6 +1,12 @@
 import pytest
-from mssql_mcp_server.server import app, list_tools, list_resources, read_resource, call_tool
-from pydantic import AnyUrl
+
+from mssql_mcp_server.server import (
+    app,
+    call_tool,
+    list_resources,
+    list_tools,
+)
+
 
 def test_server_initialization():
     """Test that the server initializes correctly."""

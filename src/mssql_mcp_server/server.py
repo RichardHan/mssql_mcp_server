@@ -1,10 +1,12 @@
 import asyncio
+import contextlib
 import logging
 import os
 import re
+
 import pymssql
 from mcp.server import Server
-from mcp.types import Resource, Tool, TextContent, ToolAnnotations
+from mcp.types import Resource, TextContent, Tool, ToolAnnotations
 from pydantic import AnyUrl
 
 # Configure logging
@@ -202,27 +204,23 @@ async def list_resources() -> list[Resource]:
         for table in tables:
             resources.append(
                 Resource(
-                    uri=f"mssql://{table[0]}/data",
+                    uri=AnyUrl(f"mssql://{table[0]}/data"),
                     name=f"Table: {table[0]}",
                     mimeType="text/plain",
                     description=f"Data in table: {table[0]}"
                 )
             )
         return resources
-    except Exception as e:
-        logger.error(f"Failed to list resources: {str(e)}")
+    except Exception as e:  # noqa: BLE001 — return empty list to client on any DB/listing failure
+        logger.error(f"Failed to list resources: {e!s}")
         return []
     finally:
         if cursor is not None:
-            try:
+            with contextlib.suppress(Exception):
                 cursor.close()
-            except Exception:
-                pass
         if conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 conn.close()
-            except Exception:
-                pass
 
 @app.read_resource()
 async def read_resource(uri: AnyUrl) -> str:
@@ -245,6 +243,8 @@ async def read_resource(uri: AnyUrl) -> str:
         cursor = conn.cursor()
         # Use TOP 100 for MSSQL (equivalent to LIMIT in MySQL)
         cursor.execute(f"SELECT TOP 100 * FROM {safe_table}")
+        if cursor.description is None:
+            raise RuntimeError("Query did not return a result set")
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
         result = [",".join(map(str, row)) for row in rows]
@@ -262,11 +262,11 @@ async def read_resource(uri: AnyUrl) -> str:
             raise RuntimeError(
                 "Query timed out and was terminated. Please narrow the query and try again."
             ) from e
-        logger.error(f"Database error reading resource {uri}: {str(e)}")
-        raise RuntimeError(f"Database error: {str(e)}") from e
+        logger.error(f"Database error reading resource {uri}: {e!s}")
+        raise RuntimeError(f"Database error: {e!s}") from e
     except Exception as e:
-        logger.error(f"Database error reading resource {uri}: {str(e)}")
-        raise RuntimeError(f"Database error: {str(e)}") from e
+        logger.error(f"Database error reading resource {uri}: {e!s}")
+        raise RuntimeError(f"Database error: {e!s}") from e
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
@@ -342,6 +342,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         
         # Regular SELECT queries
         elif is_select_query(query):
+            if cursor.description is None:
+                raise RuntimeError("Query did not return a result set")
             columns = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
             result = [",".join(map(str, row)) for row in rows]
@@ -366,20 +368,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )]
         logger.error(f"Error executing SQL '{query}': {e}")
         return [TextContent(type="text", text=f"Error executing query: {sanitize_error_message(str(e))}")]
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — return sanitized error message to client
         logger.error(f"Error executing SQL '{query}': {e}")
         return [TextContent(type="text", text=f"Error executing query: {sanitize_error_message(str(e))}")]
     finally:
         if cursor is not None:
-            try:
+            with contextlib.suppress(Exception):
                 cursor.close()
-            except Exception:
-                pass
         if conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 conn.close()
-            except Exception:
-                pass
 
 async def main():
     """Main entry point to run the MCP server."""
@@ -402,8 +400,8 @@ async def main():
                 write_stream,
                 app.create_initialization_options()
             )
-        except Exception as e:
-            logger.error(f"Server error: {str(e)}", exc_info=True)
+        except Exception:
+            logger.exception("Server error")
             raise
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 # tests/conftest.py
-import pytest
 import os
+
 import pymssql
+import pytest
+
 
 @pytest.fixture(scope="session")
 def mssql_connection():

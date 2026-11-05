@@ -1,12 +1,12 @@
 """Performance and load tests for production readiness."""
-import pytest
 import asyncio
+import gc
+import os
 import time
 from unittest.mock import Mock, patch
-from concurrent.futures import ThreadPoolExecutor
-import gc
+
 import psutil
-import os
+import pytest
 from handler_adapter import app
 
 
@@ -24,20 +24,22 @@ class TestPerformance:
         mock_cursor.description = [('id',), ('name',)]
         mock_cursor.fetchall.return_value = [(i, f'user_{i}') for i in range(100)]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                start_time = time.time()
-                result = await app.call_tool("query", {"query": "SELECT * FROM users"})
-                end_time = time.time()
+            }),
+        ):
+            start_time = time.time()
+            result = await app.call_tool("query", {"query": "SELECT * FROM users"})
+            end_time = time.time()
                 
-                # Query should complete in reasonable time (< 1 second for mock)
-                assert end_time - start_time < 1.0
-                assert len(result) == 1
-                assert "user_99" in result[0].text
+            # Query should complete in reasonable time (< 1 second for mock)
+            assert end_time - start_time < 1.0
+            assert len(result) == 1
+            assert "user_99" in result[0].text
     
     @pytest.mark.asyncio
     async def test_concurrent_query_performance(self):
@@ -49,27 +51,28 @@ class TestPerformance:
         mock_cursor.description = [('count',)]
         mock_cursor.fetchall.return_value = [(42,)]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                # Run 50 concurrent queries
-                start_time = time.time()
-                tasks = [
-                    app.call_tool("query", {"query": f"SELECT COUNT(*) FROM table_{i}"})
-                    for i in range(50)
-                ]
-                results = await asyncio.gather(*tasks)
-                end_time = time.time()
+            }),
+        ):
+            start_time = time.time()
+            tasks = [
+                app.call_tool("query", {"query": f"SELECT COUNT(*) FROM table_{i}"})
+                for i in range(50)
+            ]
+            results = await asyncio.gather(*tasks)
+            end_time = time.time()
                 
-                # All queries should complete
-                assert len(results) == 50
-                assert all("42" in r[0].text for r in results)
+            # All queries should complete
+            assert len(results) == 50
+            assert all("42" in r[0].text for r in results)
                 
-                # Should complete in reasonable time (< 5 seconds for 50 queries)
-                assert end_time - start_time < 5.0
+            # Should complete in reasonable time (< 5 seconds for 50 queries)
+            assert end_time - start_time < 5.0
     
     @pytest.mark.asyncio
     async def test_large_result_set_performance(self):
@@ -83,23 +86,25 @@ class TestPerformance:
         mock_cursor.description = [('id',), ('name',), ('email',), ('status',)]
         mock_cursor.fetchall.return_value = large_result
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                start_time = time.time()
-                result = await app.call_tool("query", {"query": "SELECT * FROM large_table"})
-                end_time = time.time()
+            }),
+        ):
+            start_time = time.time()
+            result = await app.call_tool("query", {"query": "SELECT * FROM large_table"})
+            end_time = time.time()
                 
-                # Should handle large results efficiently
-                assert len(result) == 1
-                lines = result[0].text.split('\n')
-                assert len(lines) == 10001  # Header + 10000 rows
+            # Should handle large results efficiently
+            assert len(result) == 1
+            lines = result[0].text.split('\n')
+            assert len(lines) == 10001  # Header + 10000 rows
                 
-                # Should complete in reasonable time (< 10 seconds)
-                assert end_time - start_time < 10.0
+            # Should complete in reasonable time (< 10 seconds)
+            assert end_time - start_time < 10.0
 
 
 class TestMemoryUsage:
@@ -117,29 +122,31 @@ class TestMemoryUsage:
         
         mock_cursor.fetchall.return_value = [('table1',), ('table2',)]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                process = psutil.Process(os.getpid())
+            }),
+        ):
+            process = psutil.Process(os.getpid())
                 
-                # Get baseline memory
-                gc.collect()
-                baseline_memory = process.memory_info().rss / 1024 / 1024  # MB
+            # Get baseline memory
+            gc.collect()
+            baseline_memory = process.memory_info().rss / 1024 / 1024  # MB
                 
-                # Run many operations
-                for _ in range(100):
-                    await app.list_resources()
+            # Run many operations
+            for _ in range(100):
+                await app.list_resources()
                 
-                # Check memory after operations
-                gc.collect()
-                final_memory = process.memory_info().rss / 1024 / 1024  # MB
+            # Check memory after operations
+            gc.collect()
+            final_memory = process.memory_info().rss / 1024 / 1024  # MB
                 
-                # Memory growth should be minimal (< 50 MB)
-                memory_growth = final_memory - baseline_memory
-                assert memory_growth < 50, f"Memory grew by {memory_growth} MB"
+            # Memory growth should be minimal (< 50 MB)
+            memory_growth = final_memory - baseline_memory
+            assert memory_growth < 50, f"Memory grew by {memory_growth} MB"
     
     @pytest.mark.asyncio
     async def test_large_data_memory_handling(self):
@@ -156,21 +163,22 @@ class TestMemoryUsage:
         mock_cursor.description = [('id',), ('data',)]
         mock_cursor.fetchall.return_value = list(generate_large_result())
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                # Should handle large data without excessive memory use
-                result = await app.call_tool("query", {"query": "SELECT * FROM big_table"})
+            }),
+        ):
+            result = await app.call_tool("query", {"query": "SELECT * FROM big_table"})
                 
-                # Result should be created
-                assert len(result) == 1
+            # Result should be created
+            assert len(result) == 1
                 
-                # Memory should be released after operation
-                result = None
-                gc.collect()
+            # Memory should be released after operation
+            result = None
+            gc.collect()
 
 
 class TestLoadHandling:
@@ -186,29 +194,30 @@ class TestLoadHandling:
         mock_cursor.fetchall.return_value = [('result',)]
         mock_cursor.description = [('data',)]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                # Simulate burst of 100 requests
-                start_time = time.time()
-                tasks = []
-                for _ in range(100):
-                    tasks.append(app.call_tool("query", {"query": "SELECT 1"}))
+            }),
+        ):
+            start_time = time.time()
+            tasks = []
+            for _ in range(100):
+                tasks.append(app.call_tool("query", {"query": "SELECT 1"}))
                 
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                end_time = time.time()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            end_time = time.time()
                 
-                # Count successful results
-                successful = sum(1 for r in results if not isinstance(r, Exception))
+            # Count successful results
+            successful = sum(1 for r in results if not isinstance(r, Exception))
                 
-                # Most requests should succeed
-                assert successful >= 90  # Allow 10% failure rate
+            # Most requests should succeed
+            assert successful >= 90  # Allow 10% failure rate
                 
-                # Should complete within reasonable time
-                assert end_time - start_time < 30.0
+            # Should complete within reasonable time
+            assert end_time - start_time < 30.0
     
     @pytest.mark.asyncio
     async def test_sustained_load_handling(self):
@@ -220,31 +229,32 @@ class TestLoadHandling:
         mock_cursor.fetchall.return_value = [('ok',)]
         mock_cursor.description = [('status',)]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                # Run continuous load for 10 seconds
-                start_time = time.time()
-                request_count = 0
-                error_count = 0
+            }),
+        ):
+            start_time = time.time()
+            request_count = 0
+            error_count = 0
                 
-                while time.time() - start_time < 10:
-                    try:
-                        result = await app.call_tool("query", {"query": "SELECT 'ok'"})
-                        request_count += 1
-                        assert "ok" in result[0].text
-                    except Exception:
-                        error_count += 1
+            while time.time() - start_time < 10:
+                try:
+                    result = await app.call_tool("query", {"query": "SELECT 'ok'"})
+                    request_count += 1
+                    assert "ok" in result[0].text
+                except Exception:  # noqa: BLE001 — count any failure under sustained load
+                    error_count += 1
                     
-                    # Small delay to prevent overwhelming
-                    await asyncio.sleep(0.01)
+                # Small delay to prevent overwhelming
+                await asyncio.sleep(0.01)
                 
-                # Should handle sustained load
-                assert request_count > 500  # At least 50 req/sec
-                assert error_count < request_count * 0.05  # Less than 5% errors
+            # Should handle sustained load
+            assert request_count > 500  # At least 50 req/sec
+            assert error_count < request_count * 0.05  # Less than 5% errors
 
 
 class TestScalability:
@@ -260,26 +270,28 @@ class TestScalability:
         # Test with different table counts
         table_counts = [10, 100, 1000]
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                for count in table_counts:
-                    # Create table list
-                    tables = [(f'table_{i}',) for i in range(count)]
-                    mock_cursor.fetchall.return_value = tables
+            }),
+        ):
+            for count in table_counts:
+                # Create table list
+                tables = [(f'table_{i}',) for i in range(count)]
+                mock_cursor.fetchall.return_value = tables
                     
-                    start_time = time.time()
-                    resources = await app.list_resources()
-                    end_time = time.time()
+                start_time = time.time()
+                resources = await app.list_resources()
+                end_time = time.time()
                     
-                    assert len(resources) == count
+                assert len(resources) == count
                     
-                    # Time should scale reasonably (not exponentially)
-                    time_per_table = (end_time - start_time) / count
-                    assert time_per_table < 0.01  # Less than 10ms per table
+                # Time should scale reasonably (not exponentially)
+                time_per_table = (end_time - start_time) / count
+                assert time_per_table < 0.01  # Less than 10ms per table
     
     @pytest.mark.asyncio
     async def test_query_complexity_scaling(self):
@@ -288,35 +300,36 @@ class TestScalability:
         mock_cursor = Mock()
         mock_conn.cursor.return_value = mock_cursor
         
-        with patch('pymssql.connect', return_value=mock_conn):
-            with patch.dict('os.environ', {
+        with (
+            patch('pymssql.connect', return_value=mock_conn),
+            patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
                 'MSSQL_DATABASE': 'testdb'
-            }):
-                # Test simple to complex queries
-                queries = [
-                    "SELECT 1",
-                    "SELECT * FROM users WHERE id = 1",
-                    "SELECT u.*, o.* FROM users u JOIN orders o ON u.id = o.user_id",
-                    """SELECT u.name, COUNT(o.id), SUM(o.total), AVG(o.total)
-                       FROM users u 
-                       LEFT JOIN orders o ON u.id = o.user_id 
-                       GROUP BY u.name 
-                       HAVING COUNT(o.id) > 5
-                       ORDER BY SUM(o.total) DESC"""
-                ]
+            }),
+        ):
+            queries = [
+                "SELECT 1",
+                "SELECT * FROM users WHERE id = 1",
+                "SELECT u.*, o.* FROM users u JOIN orders o ON u.id = o.user_id",
+                """SELECT u.name, COUNT(o.id), SUM(o.total), AVG(o.total)
+                   FROM users u 
+                   LEFT JOIN orders o ON u.id = o.user_id 
+                   GROUP BY u.name 
+                   HAVING COUNT(o.id) > 5
+                   ORDER BY SUM(o.total) DESC"""
+            ]
                 
-                mock_cursor.description = [('result',)]
-                mock_cursor.fetchall.return_value = [('data',)]
+            mock_cursor.description = [('result',)]
+            mock_cursor.fetchall.return_value = [('data',)]
                 
-                for query in queries:
-                    start_time = time.time()
-                    result = await app.call_tool("query", {"query": query})
-                    end_time = time.time()
+            for query in queries:
+                start_time = time.time()
+                result = await app.call_tool("query", {"query": query})
+                end_time = time.time()
                     
-                    # All queries should complete successfully
-                    assert len(result) == 1
+                # All queries should complete successfully
+                assert len(result) == 1
                     
-                    # Response time should be reasonable
-                    assert end_time - start_time < 2.0
+                # Response time should be reasonable
+                assert end_time - start_time < 2.0
