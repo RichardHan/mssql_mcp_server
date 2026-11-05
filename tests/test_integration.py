@@ -5,7 +5,7 @@ import json
 from unittest.mock import Mock, patch, AsyncMock
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Resource, Tool
-from mssql_mcp_server.server import app
+from handler_adapter import app
 
 
 class TestMCPProtocolIntegration:
@@ -36,7 +36,7 @@ class TestMCPProtocolIntegration:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
             }):
                 # Test resource listing
                 mock_cursor.fetchall.return_value = [('users',), ('products',)]
@@ -50,12 +50,12 @@ class TestMCPProtocolIntegration:
                 # Test tool listing
                 tools = await app.list_tools()
                 assert len(tools) == 1
-                assert tools[0].name == "execute_sql"
+                assert tools[0].name == "query"
                 
                 # Test tool execution
                 mock_cursor.description = [('count',)]
                 mock_cursor.fetchall.return_value = [(42,)]
-                result = await app.call_tool("execute_sql", {"query": "SELECT COUNT(*) FROM users"})
+                result = await app.call_tool("query", {"query": "SELECT COUNT(*) FROM users"})
                 
                 assert len(result) == 1
                 assert isinstance(result[0], TextContent)
@@ -72,7 +72,8 @@ class TestMCPProtocolIntegration:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 # Simulate concurrent resource listing
                 mock_cursor.fetchall.return_value = [('table1',), ('table2',)]
@@ -116,7 +117,8 @@ class TestDatabaseIntegration:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 # Multiple operations should create multiple connections
                 # (current implementation doesn't pool)
@@ -137,7 +139,8 @@ class TestDatabaseIntegration:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 # Test INSERT operation
                 result = await app.call_tool("execute_sql", {
@@ -159,7 +162,8 @@ class TestDatabaseIntegration:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 # Even if operation fails, connection should be closed
                 mock_cursor.execute.side_effect = Exception("Query failed")
@@ -188,7 +192,8 @@ class TestEdgeCases:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 resources = await app.list_resources()
                 assert resources == []
@@ -209,7 +214,8 @@ class TestEdgeCases:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 result = await app.call_tool("execute_sql", {
                     "query": "SELECT * FROM users"
@@ -241,7 +247,8 @@ class TestEdgeCases:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 result = await app.call_tool("execute_sql", {
                     "query": "SELECT data FROM test_table"

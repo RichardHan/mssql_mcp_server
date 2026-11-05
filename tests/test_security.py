@@ -78,7 +78,7 @@ class TestSQLInjectionPrevention:
                 # Test that passwords or sensitive data aren't exposed in errors
                 mock_cursor.execute.side_effect = Exception("Login failed for user 'sa' with password 'secret123'")
                 
-                result = await call_tool("execute_sql", {"query": "SELECT * FROM users"})
+                result = await call_tool("query", {"query": "SELECT * FROM users"})
                 
                 # Verify sensitive info is not in the error message
                 assert isinstance(result, list)
@@ -109,7 +109,7 @@ class TestInputValidation:
         }):
             for invalid_input in invalid_inputs:
                 with pytest.raises(ValueError):
-                    await call_tool("execute_sql", invalid_input)
+                    await call_tool("query", invalid_input)
     
     def test_environment_variable_validation(self):
         """Test that environment variables are validated."""
@@ -176,7 +176,8 @@ class TestResourceAccessControl:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'test'
+                'MSSQL_DATABASE': 'test',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 for query in dangerous_queries:
                     # The queries will be executed (current implementation doesn't block them)

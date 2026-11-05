@@ -2,7 +2,8 @@
 import pytest
 import asyncio
 from unittest.mock import Mock, patch, PropertyMock
-from mssql_mcp_server.server import app, get_db_config
+from handler_adapter import app
+from mssql_mcp_server.server import get_db_config
 import pymssql
 
 
@@ -18,7 +19,8 @@ class TestConnectionErrors:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 resources = await app.list_resources()
                 assert resources == []  # Should return empty list on connection failure
@@ -32,7 +34,8 @@ class TestConnectionErrors:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'wrong_password',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 resources = await app.list_resources()
                 assert resources == []
@@ -46,7 +49,8 @@ class TestConnectionErrors:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'nonexistent'
+                'MSSQL_DATABASE': 'nonexistent',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 resources = await app.list_resources()
                 assert resources == []
@@ -65,7 +69,8 @@ class TestConnectionErrors:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
                 assert "Error executing query" in result[0].text
@@ -91,7 +96,8 @@ class TestQueryErrors:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 result = await app.call_tool("execute_sql", {"query": "SELCT * FROM users"})
                 assert "Error executing query" in result[0].text
@@ -110,7 +116,8 @@ class TestQueryErrors:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 result = await app.call_tool("execute_sql", {"query": "SELECT * FROM sensitive_table"})
                 assert "Error executing query" in result[0].text
@@ -128,7 +135,8 @@ class TestQueryErrors:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 result = await app.call_tool("execute_sql", {
                     "query": "UPDATE users SET status = 'active'"
@@ -166,7 +174,8 @@ class TestResourceErrors:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 from pydantic import AnyUrl
                 with pytest.raises(RuntimeError, match="Database error"):
@@ -197,7 +206,8 @@ class TestRecoveryScenarios:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 # First two calls should fail
                 resources1 = await app.list_resources()
@@ -229,7 +239,8 @@ class TestRecoveryScenarios:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 # Should handle the error gracefully
                 from pydantic import AnyUrl
@@ -255,7 +266,8 @@ class TestRecoveryScenarios:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 # Should complete without timeout
                 result = await app.call_tool("execute_sql", {
@@ -280,7 +292,8 @@ class TestMemoryAndResourceManagement:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
                 
@@ -302,7 +315,8 @@ class TestMemoryAndResourceManagement:
             with patch.dict('os.environ', {
                 'MSSQL_USER': 'test',
                 'MSSQL_PASSWORD': 'test',
-                'MSSQL_DATABASE': 'testdb'
+                'MSSQL_DATABASE': 'testdb',
+                'MSSQL_ALLOW_WRITES': '1',
             }):
                 resources = await app.list_resources()
                 assert resources == []

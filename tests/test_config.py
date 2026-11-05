@@ -21,6 +21,9 @@ class TestDatabaseConfiguration:
             assert config['password'] == 'testpass'
             assert config['database'] == 'testdb'
             assert 'port' not in config
+            assert config['timeout'] == 300
+            assert config['encryption'] == 'off'
+            assert 'encrypt' not in config
     
     def test_custom_server_and_port(self):
         """Test custom server and port configuration."""
@@ -55,8 +58,12 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == True
+            assert config['encryption'] == 'require'
             assert config['tds_version'] == '7.4'
+            assert config['server'].startswith('myserver.database.windows.net')
+            assert 'TrustServerCertificate=no' in config['server']
+            assert config['timeout'] == 300
+            assert 'encrypt' not in config
     
     def test_localdb_configuration(self):
         """Test LocalDB connection string conversion."""
@@ -108,7 +115,9 @@ class TestDatabaseConfiguration:
             'MSSQL_DATABASE': 'testdb'
         }):
             config = get_db_config()
-            assert config['encrypt'] == True
+            assert config['encryption'] == 'require'
+            assert 'TrustServerCertificate=yes' in config['server']
+            assert 'encrypt' not in config
         
         # Non-Azure without encryption (default)
         with patch.dict(os.environ, {
@@ -116,9 +125,11 @@ class TestDatabaseConfiguration:
             'MSSQL_USER': 'testuser',
             'MSSQL_PASSWORD': 'testpass',
             'MSSQL_DATABASE': 'testdb'
-        }):
+        }, clear=True):
             config = get_db_config()
-            assert config['encrypt'] == False
+            assert config['encryption'] == 'off'
+            assert config['timeout'] == 300
+            assert 'encrypt' not in config
 
 
 class TestTableNameValidation:

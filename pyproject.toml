@@ -1,6 +1,6 @@
 [project]
 name = "microsoft_sql_server_mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Model Context Protocol (MCP) server that enables secure interaction with Microsoft SQL Server databases."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,7 +18,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    # Pinned below 2.0.0: mcp 2.0.0 removed the legacy `Server` decorator API
+    # (`@app.list_resources()` etc.) that src/mssql_mcp_server/server.py relies on.
+    # Remove the upper bound once the server is migrated to the 2.x API.
+    "mcp>=1.0.0,<2.0.0",
     "pymssql>=2.2.8",
 ]
 
