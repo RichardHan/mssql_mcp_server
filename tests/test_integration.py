@@ -169,10 +169,11 @@ class TestDatabaseIntegration:
         ):
             mock_cursor.execute.side_effect = Exception("Query failed")
                 
-            await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
-                
-            # Connection should still be closed
-            # (Note: current implementation may not guarantee this)
+            with pytest.raises(RuntimeError, match="Error executing query: Query failed"):
+                await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+
+            mock_cursor.close.assert_called_once()
+            mock_conn.close.assert_called_once()
 
 
 class TestEdgeCases:

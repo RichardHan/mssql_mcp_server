@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pymssql
 import pytest
 from mcp.types import (
     CallToolRequest,
@@ -397,9 +398,17 @@ async def test_sql_errors_redact_configured_passwords():
 
 
 @pytest.mark.asyncio
-async def test_protocol_marks_sql_exceptions_as_errors():
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (RuntimeError("invalid SQL"), "Error executing query: invalid SQL"),
+        (pymssql.OperationalError("Query timed out"), "Query timed out and was terminated"),
+    ],
+    ids=["sql-error", "query-timeout"],
+)
+async def test_protocol_marks_sql_exceptions_as_errors(error, expected):
     connection, cursor = make_connection([], [])
-    cursor.execute.side_effect = RuntimeError("invalid SQL")
+    cursor.execute.side_effect = error
     request = CallToolRequest(
         method="tools/call",
         params=CallToolRequestParams(
@@ -414,7 +423,10 @@ async def test_protocol_marks_sql_exceptions_as_errors():
         result = await app.request_handlers[CallToolRequest](request)
 
     assert result.root.isError is True
-    assert "Error executing query" in result.root.content[0].text
+    assert expected in result.root.content[0].text
+    connection.commit.assert_not_called()
+    cursor.close.assert_called_once_with()
+    connection.close.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -637,7 +649,7 @@ async def test_stored_result_path_can_be_explicitly_enabled(tmp_path):
         patch.dict("os.environ", env, clear=True),
     ):
         content = await call_tool(
-            "execute_sql", {"query": "SELECT id", "store_result": True}
+            "query", {"query": "SELECT id", "store_result": True}
         )
 
     summary = json.loads(content[0].text)
@@ -656,6 +668,7 @@ async def test_storage_tools_are_advertised_only_when_enabled(tmp_path):
         GET_RESULT_TOOL,
         READ_RESULT_CHUNK_TOOL,
     ]
+    assert all(tool.annotations and tool.annotations.readOnlyHint for tool in tools)
 
 
 @pytest.mark.asyncio

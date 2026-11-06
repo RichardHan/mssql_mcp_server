@@ -246,7 +246,7 @@ class TestLoadHandling:
                     result = await app.call_tool("query", {"query": "SELECT 'ok'"})
                     request_count += 1
                     assert "ok" in result[0].text
-                except Exception:  # noqa: BLE001 — count any failure under sustained load
+                except Exception:
                     error_count += 1
                     
                 # Small delay to prevent overwhelming
