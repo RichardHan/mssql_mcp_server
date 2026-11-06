@@ -217,20 +217,18 @@ class ResultStore:
             byte_limit > 0 and len(payload_bytes) > byte_limit
         )
 
-    def store(self, envelope: dict[str, Any], payload_bytes: bytes) -> dict[str, Any]:
-        root = self._require_root()
-        if (
-            self.config.max_file_bytes > 0
-            and len(payload_bytes) > self.config.max_file_bytes
-        ):
+    def validate_payload_size(self, size_bytes: int) -> None:
+        """Check whether one result can fit within the configured limits."""
+        if self.config.max_file_bytes > 0 and size_bytes > self.config.max_file_bytes:
             raise ValueError("Serialized result exceeds MSSQL_RESULT_MAX_FILE_BYTES")
-        if (
-            self.config.max_store_bytes > 0
-            and len(payload_bytes) > self.config.max_store_bytes
-        ):
+        if self.config.max_store_bytes > 0 and size_bytes > self.config.max_store_bytes:
             raise ValueError(
                 "Serialized result cannot fit within MSSQL_RESULT_MAX_STORE_BYTES"
             )
+
+    def store(self, envelope: dict[str, Any], payload_bytes: bytes) -> dict[str, Any]:
+        root = self._require_root()
+        self.validate_payload_size(len(payload_bytes))
 
         result_id = uuid4().hex
         final_path = root / f"{result_id}.json"

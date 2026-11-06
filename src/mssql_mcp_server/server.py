@@ -3,6 +3,8 @@ import contextlib
 import logging
 import os
 import re
+from collections.abc import Iterator
+from typing import Any
 
 import pymssql
 from mcp.server import Server
@@ -169,7 +171,7 @@ def get_result_store() -> ResultStore:
     """Create a result store from the current environment configuration."""
     return ResultStore.from_env()
 
-def format_tabular_result(
+def _prepare_tabular_result(
     columns,
     rows,
     result_format: ResultFormat,
@@ -177,8 +179,8 @@ def format_tabular_result(
     store: ResultStore,
     force_store: bool = False,
     truncated: bool = False,
-) -> str:
-    """Return an inline result or a summary for a persisted oversized result."""
+) -> str | tuple[dict[str, Any], bytes]:
+    """Prepare inline text or a validated payload for later persistence."""
     materialized_rows = list(rows)
 
     # Without file-backed storage there is no threshold to evaluate. Preserve
@@ -195,10 +197,33 @@ def format_tabular_result(
     envelope = build_result(columns, materialized_rows, truncated=truncated)
     payload_bytes = serialize_json(envelope).encode("utf-8")
     if store.should_store(payload_bytes, envelope["row_count"], force=force_store):
-        return serialize_json(store.store(envelope, payload_bytes))
+        store.validate_payload_size(len(payload_bytes))
+        return envelope, payload_bytes
     if result_format is ResultFormat.LEGACY:
         return serialize_legacy(columns, materialized_rows)
     return serialize_envelope(envelope, result_format)
+
+def format_tabular_result(
+    columns,
+    rows,
+    result_format: ResultFormat,
+    *,
+    store: ResultStore,
+    force_store: bool = False,
+    truncated: bool = False,
+) -> str:
+    """Return an inline result or a summary for a persisted oversized result."""
+    prepared = _prepare_tabular_result(
+        columns,
+        rows,
+        result_format,
+        store=store,
+        force_store=force_store,
+        truncated=truncated,
+    )
+    if isinstance(prepared, str):
+        return prepared
+    return serialize_json(store.store(*prepared))
 
 def _validate_tool_names(command: str) -> None:
     if command in {GET_RESULT_TOOL, READ_RESULT_CHUNK_TOOL}:
@@ -431,6 +456,25 @@ async def list_tools() -> list[Tool]:
         )
     return tools
 
+@contextlib.contextmanager
+def _report_query_errors() -> Iterator[None]:
+    """Translate database errors without labeling result processing as SQL."""
+    try:
+        yield
+    except Exception as e:
+        if isinstance(e, pymssql.OperationalError) and "timed out" in str(e).lower():
+            logger.error(
+                "Query timed out after %s seconds",
+                os.getenv("MSSQL_QUERY_TIMEOUT", "300"),
+            )
+            raise RuntimeError(
+                "Query timed out and was terminated. Please narrow the query and try again."
+            ) from e
+        safe_message = sanitize_error_message(str(e))
+        logger.error("Error executing SQL query: %s", safe_message)
+        raise RuntimeError(f"Error executing query: {safe_message}") from e
+
+
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Execute SQL commands."""
@@ -498,37 +542,44 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     columns = None
     rows = None
     affected_rows = None
+    prepared_result = None
     try:
-        conn = pymssql.connect(**config)
-        cursor = conn.cursor()
-        cursor.execute(query)
+        with _report_query_errors():
+            conn = pymssql.connect(**config)
+            cursor = conn.cursor()
+            cursor.execute(query)
 
-        # A cursor description is the driver-level signal that the statement
-        # returned rows. This also covers CTEs and stored procedures.
-        if cursor.description is not None:
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-        elif not writes_enabled:
-            raise RuntimeError("Query did not return a result set")
-        else:
-            affected_rows = cursor.rowcount
+            # Cursor metadata also covers CTEs and stored procedures.
+            if cursor.description is not None:
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
+            elif not writes_enabled:
+                raise RuntimeError("Query did not return a result set")
+            else:
+                affected_rows = cursor.rowcount
 
-        # Fetch before committing in write mode because commit can discard active results.
+        if (
+            rows is not None
+            and result_format is ResultFormat.LEGACY
+            and select_query
+            and "INFORMATION_SCHEMA.TABLES" in query.upper()
+        ):
+            columns = ["Tables_in_" + config["database"]]
+            rows = [[row[0]] for row in rows]
+
         if writes_enabled:
-            conn.commit()
-
-    except Exception as e:
-        if isinstance(e, pymssql.OperationalError) and "timed out" in str(e).lower():
-            logger.error(
-                "Query timed out after %s seconds",
-                os.getenv("MSSQL_QUERY_TIMEOUT", "300"),
-            )
-            raise RuntimeError(
-                "Query timed out and was terminated. Please narrow the query and try again."
-            ) from e
-        safe_message = sanitize_error_message(str(e))
-        logger.error("Error executing SQL query: %s", safe_message)
-        raise RuntimeError(f"Error executing query: {safe_message}") from e
+            # Prepare and validate before commit. Only publish files after commit.
+            if columns is not None and rows is not None:
+                try:
+                    prepared_result = _prepare_tabular_result(
+                        columns, rows, result_format, store=store, force_store=force_store
+                    )
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        conn.rollback()
+                    raise
+            with _report_query_errors():
+                conn.commit()
     finally:
         if cursor is not None:
             with contextlib.suppress(Exception):
@@ -537,16 +588,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             with contextlib.suppress(Exception):
                 conn.close()
 
-    # Keep result serialization and persistence outside the database exception
-    # boundary so post-processing failures are not mislabeled as SQL errors.
+    if prepared_result is not None:
+        if isinstance(prepared_result, str):
+            text = prepared_result
+        else:
+            try:
+                text = serialize_json(store.store(*prepared_result))
+            except Exception as e:
+                logger.error(
+                    "Result storage failed after SQL commit: %s",
+                    sanitize_error_message(str(e)),
+                )
+                raise RuntimeError(
+                    "SQL transaction was committed, but result storage failed. "
+                    "Retrying will execute the SQL again."
+                ) from e
+        return [TextContent(type="text", text=text)]
+
     if columns is not None and rows is not None:
-        if (
-            result_format is ResultFormat.LEGACY
-            and select_query
-            and "INFORMATION_SCHEMA.TABLES" in query.upper()
-        ):
-            columns = ["Tables_in_" + config["database"]]
-            rows = [[row[0]] for row in rows]
         text = format_tabular_result(
             columns,
             rows,

@@ -380,6 +380,78 @@ async def test_post_processing_errors_are_not_mislabeled_as_sql_errors():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size_limit", ["MSSQL_RESULT_MAX_FILE_BYTES", "MSSQL_RESULT_MAX_STORE_BYTES"]
+)
+async def test_result_size_limit_prevents_commit(tmp_path, size_limit):
+    connection, cursor = make_connection(["id"], [[1]])
+    env = {
+        **DB_ENV,
+        "MSSQL_ALLOW_WRITES": "1",
+        "MSSQL_RESULT_OUTPUT_DIR": str(tmp_path),
+        size_limit: "1",
+    }
+
+    with (
+        patch("pymssql.connect", return_value=connection),
+        patch.dict("os.environ", env, clear=True),
+        pytest.raises(ValueError, match=size_limit),
+    ):
+        await call_tool(
+            "execute_sql",
+            {
+                "query": "INSERT INTO records OUTPUT inserted.id DEFAULT VALUES",
+                "store_result": True,
+            },
+        )
+
+    connection.commit.assert_not_called()
+    connection.rollback.assert_called_once_with()
+    cursor.close.assert_called_once_with()
+    connection.close.assert_called_once_with()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_protocol_reports_commit_when_result_storage_fails(tmp_path):
+    connection, cursor = make_connection(["id"], [[1]])
+    env = {
+        **DB_ENV,
+        "MSSQL_ALLOW_WRITES": "1",
+        "MSSQL_RESULT_OUTPUT_DIR": str(tmp_path),
+    }
+    request = CallToolRequest(
+        method="tools/call",
+        params=CallToolRequestParams(
+            name="execute_sql",
+            arguments={
+                "query": "INSERT INTO records OUTPUT inserted.id DEFAULT VALUES",
+                "store_result": True,
+            },
+        ),
+    )
+
+    def fail_storage(_file_descriptor):
+        connection.commit.assert_called_once_with()
+        cursor.close.assert_called_once_with()
+        connection.close.assert_called_once_with()
+        raise OSError("disk full")
+
+    with (
+        patch("pymssql.connect", return_value=connection),
+        patch.dict("os.environ", env, clear=True),
+        patch("mssql_mcp_server.result_store.os.fsync", side_effect=fail_storage),
+    ):
+        result = await app.request_handlers[CallToolRequest](request)
+
+    assert result.root.isError is True
+    assert "SQL transaction was committed" in result.root.content[0].text
+    assert "Retrying will execute the SQL again" in result.root.content[0].text
+    connection.rollback.assert_not_called()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
 async def test_sql_errors_redact_configured_passwords():
     connection, cursor = make_connection([], [])
     cursor.execute.side_effect = RuntimeError(
