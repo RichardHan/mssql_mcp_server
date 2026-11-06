@@ -74,8 +74,8 @@ class TestConnectionErrors:
                 'MSSQL_ALLOW_WRITES': '1',
             }),
         ):
-            result = await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
-            assert "Error executing query" in result[0].text
+            with pytest.raises(RuntimeError, match="Error executing query: Network error"):
+                await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
                 
             # Ensure cleanup attempted
             mock_cursor.close.assert_called()
@@ -103,9 +103,8 @@ class TestQueryErrors:
                 'MSSQL_ALLOW_WRITES': '1',
             }),
         ):
-            result = await app.call_tool("execute_sql", {"query": "SELCT * FROM users"})
-            assert "Error executing query" in result[0].text
-            assert len(result) == 1
+            with pytest.raises(RuntimeError, match="Error executing query: Incorrect syntax"):
+                await app.call_tool("execute_sql", {"query": "SELCT * FROM users"})
     
     @pytest.mark.asyncio
     async def test_permission_denied(self):
@@ -125,8 +124,8 @@ class TestQueryErrors:
                 'MSSQL_ALLOW_WRITES': '1',
             }),
         ):
-            result = await app.call_tool("execute_sql", {"query": "SELECT * FROM sensitive_table"})
-            assert "Error executing query" in result[0].text
+            with pytest.raises(RuntimeError, match="permission was denied"):
+                await app.call_tool("execute_sql", {"query": "SELECT * FROM sensitive_table"})
     
     @pytest.mark.asyncio
     async def test_deadlock_handling(self):
@@ -146,10 +145,10 @@ class TestQueryErrors:
                 'MSSQL_ALLOW_WRITES': '1',
             }),
         ):
-            result = await app.call_tool("execute_sql", {
-                "query": "UPDATE users SET status = 'active'"
-            })
-            assert "Error executing query" in result[0].text
+            with pytest.raises(RuntimeError, match="deadlocked"):
+                await app.call_tool("execute_sql", {
+                    "query": "UPDATE users SET status = 'active'"
+                })
 
 
 class TestResourceErrors:
@@ -310,7 +309,8 @@ class TestMemoryAndResourceManagement:
                 'MSSQL_ALLOW_WRITES': '1',
             }),
         ):
-            await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
+            with pytest.raises(RuntimeError, match="Unexpected error"):
+                await app.call_tool("execute_sql", {"query": "SELECT * FROM users"})
                 
             # Cursor should be closed despite error
             mock_cursor.close.assert_called()

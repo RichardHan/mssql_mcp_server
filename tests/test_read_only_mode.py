@@ -80,6 +80,7 @@ class TestCallToolReadOnlyGate:
             result = await call_tool("query", {"query": "SELECT id FROM t"})
             assert "read-only mode" not in result[0].text
             mock_connect.assert_called_once()
+            mock_conn.commit.assert_not_called()
 
     async def test_allows_insert_in_write_mode(self):
         env = {
@@ -93,6 +94,7 @@ class TestCallToolReadOnlyGate:
             patch("mssql_mcp_server.server.pymssql.connect") as mock_connect,
         ):
             mock_cursor = MagicMock()
+            mock_cursor.description = None
             mock_cursor.rowcount = 1
             mock_conn = MagicMock()
             mock_conn.cursor.return_value = mock_cursor

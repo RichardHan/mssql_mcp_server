@@ -3,11 +3,26 @@ import contextlib
 import logging
 import os
 import re
+from collections.abc import Iterator
+from typing import Any
 
 import pymssql
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool, ToolAnnotations
 from pydantic import AnyUrl
+
+from .result_store import ResultStore
+from .serialization import (
+    ResultFormat,
+    build_result,
+    serialize_csv,
+    serialize_envelope,
+    serialize_json,
+    serialize_legacy,
+)
+
+GET_RESULT_TOOL = "get_sql_result"
+READ_RESULT_CHUNK_TOOL = "read_sql_result_chunk"
 
 # Configure logging
 logging.basicConfig(
@@ -17,23 +32,15 @@ logging.basicConfig(
 logger = logging.getLogger("mssql_mcp_server")
 
 def sanitize_error_message(message: str) -> str:
-    """Redact obvious credential material from error strings returned to clients."""
-    # Matches: password='x', password "x", password: x, password 'x', with password 'x'
+    """Remove credentials from database errors before reporting them."""
     message = re.sub(
-        r"(?i)(password\s*[=:]?\s*)(['\"])([^'\"]+)\2",
-        r"\1\2***\2",
+        r"""(?i)(\b(?:password|pwd)\b\s*(?:=|:)?\s*)(?:'[^']*'|"[^"]*"|[^\s,;]+)""",
+        r"\1<redacted>",
         message,
     )
-    message = re.sub(
-        r"(?i)(password\s*[=:]\s*)(\S+)",
-        r"\1***",
-        message,
-    )
-    message = re.sub(
-        r"(?i)(pwd\s*[=:]?\s*)(['\"])([^'\"]+)\2",
-        r"\1\2***\2",
-        message,
-    )
+    password = os.getenv("MSSQL_PASSWORD")
+    if password:
+        message = message.replace(password, "<redacted>")
     return message
 
 
@@ -155,6 +162,73 @@ def get_command():
         return override
     return "execute_sql" if allow_writes() else "query"
 
+def get_result_format(requested_format: str | None = None) -> ResultFormat:
+    """Resolve a request override or the configured default result format."""
+    configured_format = os.getenv("MSSQL_RESULT_FORMAT", ResultFormat.LEGACY.value)
+    return ResultFormat.parse(requested_format, default=configured_format)
+
+def get_result_store() -> ResultStore:
+    """Create a result store from the current environment configuration."""
+    return ResultStore.from_env()
+
+def _prepare_tabular_result(
+    columns,
+    rows,
+    result_format: ResultFormat,
+    *,
+    store: ResultStore,
+    force_store: bool = False,
+    truncated: bool = False,
+) -> str | tuple[dict[str, Any], bytes]:
+    """Prepare inline text or a validated payload for later persistence."""
+    materialized_rows = list(rows)
+
+    # Without file-backed storage there is no threshold to evaluate. Preserve
+    # the requested wire format directly and avoid building an unused canonical
+    # JSON copy for legacy and CSV callers.
+    if not store.enabled and not force_store:
+        if result_format is ResultFormat.LEGACY:
+            return serialize_legacy(columns, materialized_rows)
+        if result_format is ResultFormat.CSV:
+            return serialize_csv(columns, materialized_rows)
+        envelope = build_result(columns, materialized_rows, truncated=truncated)
+        return serialize_json(envelope)
+
+    envelope = build_result(columns, materialized_rows, truncated=truncated)
+    payload_bytes = serialize_json(envelope).encode("utf-8")
+    if store.should_store(payload_bytes, envelope["row_count"], force=force_store):
+        store.validate_payload_size(len(payload_bytes))
+        return envelope, payload_bytes
+    if result_format is ResultFormat.LEGACY:
+        return serialize_legacy(columns, materialized_rows)
+    return serialize_envelope(envelope, result_format)
+
+def format_tabular_result(
+    columns,
+    rows,
+    result_format: ResultFormat,
+    *,
+    store: ResultStore,
+    force_store: bool = False,
+    truncated: bool = False,
+) -> str:
+    """Return an inline result or a summary for a persisted oversized result."""
+    prepared = _prepare_tabular_result(
+        columns,
+        rows,
+        result_format,
+        store=store,
+        force_store=force_store,
+        truncated=truncated,
+    )
+    if isinstance(prepared, str):
+        return prepared
+    return serialize_json(store.store(*prepared))
+
+def _validate_tool_names(command: str) -> None:
+    if command in {GET_RESULT_TOOL, READ_RESULT_CHUNK_TOOL}:
+        raise ValueError(f"MSSQL_COMMAND conflicts with reserved tool name '{command}'")
+
 def is_select_query(query: str) -> bool:
     """
     Check if a query is a SELECT (or CTE/WITH) statement, accounting for comments.
@@ -178,6 +252,7 @@ def is_select_query(query: str) -> bool:
     # Get the first non-empty word after stripping whitespace
     first_word = query_cleaned.strip().split()[0] if query_cleaned.strip() else ""
     return first_word.upper() in ("SELECT", "WITH")
+
 
 # Initialize server
 app = Server("mssql_mcp_server")
@@ -206,13 +281,15 @@ async def list_resources() -> list[Resource]:
                 Resource(
                     uri=AnyUrl(f"mssql://{table[0]}/data"),
                     name=f"Table: {table[0]}",
+                    # MCP SDK 1.2 wraps string resources as text/plain. Keep the
+                    # catalog consistent until the SDK can carry a dynamic MIME.
                     mimeType="text/plain",
-                    description=f"Data in table: {table[0]}"
+                    description=f"Data in table: {table[0]}",
                 )
             )
         return resources
     except Exception as e:  # noqa: BLE001 — return empty list to client on any DB/listing failure
-        logger.error(f"Failed to list resources: {e!s}")
+        logger.error("Failed to list resources: %s", sanitize_error_message(str(e)))
         return []
     finally:
         if cursor is not None:
@@ -234,26 +311,27 @@ async def read_resource(uri: AnyUrl) -> str:
         
     parts = uri_str[8:].split('/')
     table = parts[0]
+    result_format = get_result_format()
+    store = get_result_store()
+    use_sentinel_row = result_format is ResultFormat.JSON or store.enabled
+    row_limit = 101 if use_sentinel_row else 100
     
+    conn = None
+    cursor = None
     try:
         # Validate table name to prevent SQL injection
         safe_table = validate_table_name(table)
         
         conn = pymssql.connect(**config)
         cursor = conn.cursor()
-        # Use TOP 100 for MSSQL (equivalent to LIMIT in MySQL)
-        cursor.execute(f"SELECT TOP 100 * FROM {safe_table}")
+        cursor.execute(f"SELECT TOP {row_limit} * FROM {safe_table}")
         if cursor.description is None:
             raise RuntimeError("Query did not return a result set")
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
-        result = [",".join(map(str, row)) for row in rows]
-        cursor.close()
-        conn.close()
-        return "\n".join([",".join(columns)] + result)
-                
-    except pymssql.OperationalError as e:
-        if "timed out" in str(e).lower():
+
+    except Exception as e:
+        if isinstance(e, pymssql.OperationalError) and "timed out" in str(e).lower():
             logger.error(
                 "Query timed out after %s seconds reading resource %s",
                 os.getenv("MSSQL_QUERY_TIMEOUT", "300"),
@@ -262,31 +340,46 @@ async def read_resource(uri: AnyUrl) -> str:
             raise RuntimeError(
                 "Query timed out and was terminated. Please narrow the query and try again."
             ) from e
-        logger.error(f"Database error reading resource {uri}: {e!s}")
-        raise RuntimeError(f"Database error: {e!s}") from e
-    except Exception as e:
-        logger.error(f"Database error reading resource {uri}: {e!s}")
-        raise RuntimeError(f"Database error: {e!s}") from e
+        safe_message = sanitize_error_message(str(e))
+        logger.error("Database error reading resource %s: %s", uri_str, safe_message)
+        raise RuntimeError(f"Database error: {safe_message}") from e
+    finally:
+        if cursor is not None:
+            with contextlib.suppress(Exception):
+                cursor.close()
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+
+    return format_tabular_result(
+        columns,
+        rows[:100],
+        result_format,
+        store=store,
+        truncated=use_sentinel_row and len(rows) > 100,
+    )
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
     """List available SQL Server tools."""
     command = get_command()
+    _validate_tool_names(command)
     logger.info("Listing tools...")
+    writes_enabled = allow_writes()
     annotations = None
-    if not allow_writes():
+    if not writes_enabled:
         annotations = ToolAnnotations(
             readOnlyHint=True,
             destructiveHint=False,
             idempotentHint=True,
             openWorldHint=True,
         )
-    return [
+    tools = [
         Tool(
             name=command,
             description=(
                 "Execute an SQL query on the SQL Server"
-                if allow_writes()
+                if writes_enabled
                 else "Run a read-only SQL query"
             ),
             inputSchema={
@@ -294,20 +387,127 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The SQL query to execute"
-                    }
+                        "description": "The SQL query to execute",
+                    },
+                    "result_format": {
+                        "type": "string",
+                        "enum": [item.value for item in ResultFormat],
+                        "description": (
+                            "Optional query result format. Defaults to "
+                            "MSSQL_RESULT_FORMAT or legacy."
+                        ),
+                    },
+                    "store_result": {
+                        "type": "boolean",
+                        "description": (
+                            "Persist the full JSON result even when it is below "
+                            "the configured thresholds. Requires "
+                            "MSSQL_RESULT_OUTPUT_DIR."
+                        ),
+                    },
                 },
-                "required": ["query"]
+                "required": ["query"],
             },
             annotations=annotations,
         )
     ]
+    store = get_result_store()
+    if store.enabled:
+        tools.extend(
+            [
+                Tool(
+                    name=GET_RESULT_TOOL,
+                    description="Read a stored SQL result using row pagination",
+                    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "result_id": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{32}$",
+                            },
+                            "offset": {"type": "integer", "minimum": 0},
+                            "limit": {"type": "integer", "minimum": 1},
+                        },
+                        "required": ["result_id"],
+                    },
+                ),
+                Tool(
+                    name=READ_RESULT_CHUNK_TOOL,
+                    description=("Read bounded base64 chunks of a stored JSON result"),
+                    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "result_id": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{32}$",
+                            },
+                            "offset_bytes": {
+                                "type": "integer",
+                                "minimum": 0,
+                            },
+                            "max_bytes": {"type": "integer", "minimum": 1},
+                        },
+                        "required": ["result_id"],
+                    },
+                ),
+            ]
+        )
+    return tools
+
+@contextlib.contextmanager
+def _report_query_errors() -> Iterator[None]:
+    """Translate database errors without labeling result processing as SQL."""
+    try:
+        yield
+    except Exception as e:
+        if isinstance(e, pymssql.OperationalError) and "timed out" in str(e).lower():
+            logger.error(
+                "Query timed out after %s seconds",
+                os.getenv("MSSQL_QUERY_TIMEOUT", "300"),
+            )
+            raise RuntimeError(
+                "Query timed out and was terminated. Please narrow the query and try again."
+            ) from e
+        safe_message = sanitize_error_message(str(e))
+        logger.error("Error executing SQL query: %s", safe_message)
+        raise RuntimeError(f"Error executing query: {safe_message}") from e
+
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Execute SQL commands."""
     command = get_command()
-    logger.info(f"Calling tool: {name} with arguments: {arguments}")
+    _validate_tool_names(command)
+    logger.info("Calling tool: %s", name)
+
+    if not isinstance(arguments, dict):
+        raise ValueError("Tool arguments must be an object")  # noqa: TRY004
+
+    if name == GET_RESULT_TOOL:
+        result_id = arguments.get("result_id")
+        if not isinstance(result_id, str):
+            raise ValueError("result_id is required")
+        store = get_result_store()
+        page = store.read_page(
+            result_id,
+            offset=arguments.get("offset", 0),
+            limit=arguments.get("limit"),
+        )
+        return [TextContent(type="text", text=serialize_json(page))]
+
+    if name == READ_RESULT_CHUNK_TOOL:
+        result_id = arguments.get("result_id")
+        if not isinstance(result_id, str):
+            raise ValueError("result_id is required")
+        store = get_result_store()
+        chunk = store.read_chunk(
+            result_id,
+            offset_bytes=arguments.get("offset_bytes", 0),
+            max_bytes=arguments.get("max_bytes"),
+        )
+        return [TextContent(type="text", text=serialize_json(chunk))]
     
     if name != command:
         raise ValueError(f"Unknown tool: {name}")
@@ -315,8 +515,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     query = arguments.get("query")
     if not isinstance(query, str) or not query.strip():
         raise ValueError("Query is required")
-
-    if not allow_writes() and not is_select_query(query):
+    writes_enabled = allow_writes()
+    select_query = is_select_query(query)
+    if not writes_enabled and not select_query:
         return [TextContent(
             type="text",
             text=(
@@ -325,52 +526,60 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             ),
         )]
 
+    result_format = get_result_format(arguments.get("result_format"))
+    force_store = arguments.get("store_result", False)
+    if not isinstance(force_store, bool):
+        raise ValueError("store_result must be a boolean")  # noqa: TRY004
+    store = get_result_store()
+    if force_store and not store.enabled:
+        raise ValueError(
+            "store_result requires MSSQL_RESULT_OUTPUT_DIR to be configured"
+        )
     config = get_db_config()
+
     conn = None
     cursor = None
+    columns = None
+    rows = None
+    affected_rows = None
+    prepared_result = None
     try:
-        conn = pymssql.connect(**config)
-        cursor = conn.cursor()
-        cursor.execute(query)
-        
-        # Special handling for table listing
-        if is_select_query(query) and "INFORMATION_SCHEMA.TABLES" in query.upper():
-            tables = cursor.fetchall()
-            result = ["Tables_in_" + config["database"]]  # Header
-            result.extend([table[0] for table in tables])
-            return [TextContent(type="text", text="\n".join(result))]
-        
-        # Regular SELECT queries
-        elif is_select_query(query):
-            if cursor.description is None:
-                raise RuntimeError("Query did not return a result set")
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            result = [",".join(map(str, row)) for row in rows]
-            return [TextContent(type="text", text="\n".join([",".join(columns)] + result))]
-        
-        # Non-SELECT queries
-        else:
-            conn.commit()
-            affected_rows = cursor.rowcount
-            return [TextContent(type="text", text=f"Query executed successfully. Rows affected: {affected_rows}")]
+        with _report_query_errors():
+            conn = pymssql.connect(**config)
+            cursor = conn.cursor()
+            cursor.execute(query)
 
-    except pymssql.OperationalError as e:
-        if "timed out" in str(e).lower():
-            logger.error(
-                "Query timed out after %s seconds: %s",
-                os.getenv("MSSQL_QUERY_TIMEOUT", "300"),
-                query[:200],
-            )
-            return [TextContent(
-                type="text",
-                text="Query timed out and was terminated. Please narrow the query and try again.",
-            )]
-        logger.error(f"Error executing SQL '{query}': {e}")
-        return [TextContent(type="text", text=f"Error executing query: {sanitize_error_message(str(e))}")]
-    except Exception as e:  # noqa: BLE001 — return sanitized error message to client
-        logger.error(f"Error executing SQL '{query}': {e}")
-        return [TextContent(type="text", text=f"Error executing query: {sanitize_error_message(str(e))}")]
+            # Cursor metadata also covers CTEs and stored procedures.
+            if cursor.description is not None:
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
+            elif not writes_enabled:
+                raise RuntimeError("Query did not return a result set")
+            else:
+                affected_rows = cursor.rowcount
+
+        if (
+            rows is not None
+            and result_format is ResultFormat.LEGACY
+            and select_query
+            and "INFORMATION_SCHEMA.TABLES" in query.upper()
+        ):
+            columns = ["Tables_in_" + config["database"]]
+            rows = [[row[0]] for row in rows]
+
+        if writes_enabled:
+            # Prepare and validate before commit. Only publish files after commit.
+            if columns is not None and rows is not None:
+                try:
+                    prepared_result = _prepare_tabular_result(
+                        columns, rows, result_format, store=store, force_store=force_store
+                    )
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        conn.rollback()
+                    raise
+            with _report_query_errors():
+                conn.commit()
     finally:
         if cursor is not None:
             with contextlib.suppress(Exception):
@@ -378,6 +587,40 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if conn is not None:
             with contextlib.suppress(Exception):
                 conn.close()
+
+    if prepared_result is not None:
+        if isinstance(prepared_result, str):
+            text = prepared_result
+        else:
+            try:
+                text = serialize_json(store.store(*prepared_result))
+            except Exception as e:
+                logger.error(
+                    "Result storage failed after SQL commit: %s",
+                    sanitize_error_message(str(e)),
+                )
+                raise RuntimeError(
+                    "SQL transaction was committed, but result storage failed. "
+                    "Retrying will execute the SQL again."
+                ) from e
+        return [TextContent(type="text", text=text)]
+
+    if columns is not None and rows is not None:
+        text = format_tabular_result(
+            columns,
+            rows,
+            result_format,
+            store=store,
+            force_store=force_store,
+        )
+        return [TextContent(type="text", text=text)]
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Query executed successfully. Rows affected: {affected_rows}",
+        )
+    ]
 
 async def main():
     """Main entry point to run the MCP server."""
