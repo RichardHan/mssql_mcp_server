@@ -14,7 +14,7 @@ Pairs with the open-source MCP server `microsoft_sql_server_mcp` (github.com/Ric
 
 ## What the server exposes
 - **Resources**: one per table, `mssql://<table>/data` (reads first 100 rows as CSV).
-- **Tool**: `query` in read-only mode (default; SELECT/WITH only). When `MSSQL_ALLOW_WRITES=true` the tool is `execute_sql` and accepts any statement. `MSSQL_COMMAND` overrides the tool name.
+- **Tool**: `query` in read-only mode (default; a single parsed SELECT/WITH/set-operation only — stacked batches and SELECT INTO are rejected). When `MSSQL_ALLOW_WRITES=true` the tool is `execute_sql` and accepts any statement. `MSSQL_COMMAND` overrides the tool name.
 
 If the server is not configured, follow `references/setup.md`. Env vars are in `references/env-vars.md`.
 
@@ -23,7 +23,7 @@ If the server is not configured, follow `references/setup.md`. Env vars are in `
 2. **Inspect schema** before querying: `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'X'`.
 3. **Read with limits**: always `SELECT TOP (100) ...` (or `OFFSET/FETCH`), name columns instead of `*` on wide tables, filter on indexed columns, avoid unbounded joins on large tables.
 4. **Writes**: never run INSERT/UPDATE/DELETE/DDL without showing the exact statement and getting explicit user confirmation. Prefer a `SELECT COUNT(*)` with the same WHERE first to show impact. Wrap in `BEGIN TRAN ... ` when possible. Leave read-only mode on unless the user deliberately enables writes.
-5. **Parameter safety**: the tool takes raw SQL. Never paste untrusted user text directly into SQL; validate identifiers against INFORMATION_SCHEMA, quote with `QUOTENAME`, escape string literals (`'` -> `''`), and reject stacked statements.
+5. **Parameter safety**: the tool takes raw SQL. Never paste untrusted user text directly into SQL; validate identifiers against INFORMATION_SCHEMA, quote with `QUOTENAME`, escape string literals (`'` -> `''`). Read-only mode rejects stacked statements / SELECT INTO before execute, but still use a least-privilege login — the gate is fail-closed defense in depth, not a full SQL security prover.
 
 ## Credentials
 - Use a dedicated least-privilege login (e.g. `db_datareader`), **never `sa`**.

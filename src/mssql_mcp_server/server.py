@@ -8,6 +8,8 @@ import pymssql
 from mcp.server import Server
 from mcp.types import Resource, TextContent, Tool, ToolAnnotations
 from pydantic import AnyUrl
+from sqlglot import exp, parse
+from sqlglot.errors import ErrorLevel
 
 # Configure logging
 logging.basicConfig(
@@ -155,29 +157,95 @@ def get_command():
         return override
     return "execute_sql" if allow_writes() else "query"
 
+# Statement roots permitted in read-only mode (fail-closed otherwise).
+_READ_ONLY_ROOTS = (
+    exp.Select,
+    exp.Union,
+    exp.Except,
+    exp.Intersect,
+)
+
+# Function / procedure names that must not appear even inside an otherwise-SELECT AST.
+# Defense in depth: parser gaps should not silently allow these.
+_BLOCKED_NAME_FRAGMENTS = frozenset({
+    "OPENROWSET",
+    "OPENDATASOURCE",
+    "OPENQUERY",
+    "OPENXML",
+    "XP_CMDSHELL",
+    "SP_EXECUTESQL",
+    "SP_OACREATE",
+    "SP_OAMETHOD",
+})
+
+
+def _expression_name(node: exp.Expr) -> str | None:
+    """Best-effort identifier/function name from a sqlglot node."""
+    this = getattr(node, "this", None)
+    if isinstance(this, str):
+        return this
+    if isinstance(this, exp.Identifier):
+        return this.name
+    if isinstance(this, exp.Expression) and hasattr(this, "name"):
+        return this.name
+    if hasattr(node, "name") and isinstance(node.name, str):
+        return node.name
+    return None
+
+
+def _contains_blocked_name(tree: exp.Expression) -> bool:
+    for node in tree.walk():
+        name = _expression_name(node)
+        if name and name.upper() in _BLOCKED_NAME_FRAGMENTS:
+            return True
+        # Also inspect raw SQL fragments for Command nodes
+        if isinstance(node, (exp.Command, exp.Execute)):
+            return True
+    return False
+
+
 def is_select_query(query: str) -> bool:
     """
-    Check if a query is a SELECT (or CTE/WITH) statement, accounting for comments.
-    Handles both single-line (--) and multi-line (/* */) SQL comments.
+    Fail-closed check: allow only a single read-only SELECT/WITH/set-operation.
+
+    Uses sqlglot's T-SQL parser (not a prefix regex). Rejects stacked statements,
+    SELECT INTO, DML/DDL/EXEC, and known dangerous table-valued helpers when the
+    AST names them. Parse failures reject the query.
+
+    Limitations (by design — prefer DB least-privilege as defense in depth):
+    - Does not claim to prove arbitrary T-SQL is free of side effects.
+    - Dialect/parser gaps fail closed (query denied) rather than allowed.
+    - ``MSSQL_ALLOW_WRITES`` bypasses this gate entirely for opt-in write mode.
     """
-    # Remove multi-line comments /* ... */
-    query_cleaned = re.sub(r'/\*.*?\*/', '', query, flags=re.DOTALL)
-    
-    # Remove single-line comments -- ...
-    lines = query_cleaned.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        # Find -- comment marker and remove everything after it
-        comment_pos = line.find('--')
-        if comment_pos != -1:
-            line = line[:comment_pos]
-        cleaned_lines.append(line)
-    
-    query_cleaned = '\n'.join(cleaned_lines)
-    
-    # Get the first non-empty word after stripping whitespace
-    first_word = query_cleaned.strip().split()[0] if query_cleaned.strip() else ""
-    return first_word.upper() in ("SELECT", "WITH")
+    if not isinstance(query, str) or not query.strip():
+        return False
+
+    try:
+        expressions = parse(query, read="tsql", error_level=ErrorLevel.RAISE)
+    except Exception:  # noqa: BLE001 — fail closed on any parse/tokenize failure
+        logger.info("Read-only gate: rejecting unparseable / unsupported T-SQL")
+        return False
+
+    # Drop empty placeholders and trailing semicolon markers.
+    statements = [
+        node
+        for node in expressions
+        if node is not None and not isinstance(node, exp.Semicolon)
+    ]
+    if len(statements) != 1:
+        return False
+
+    tree = statements[0]
+    if not isinstance(tree, _READ_ONLY_ROOTS):
+        return False
+
+    # SELECT INTO writes a table — never read-only.
+    if any(isinstance(node, exp.Into) for node in tree.find_all(exp.Into)):
+        return False
+    if isinstance(tree, exp.Select) and tree.args.get("into") is not None:
+        return False
+
+    return not _contains_blocked_name(tree)
 
 # Initialize server
 app = Server("mssql_mcp_server")
