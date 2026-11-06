@@ -33,6 +33,53 @@ class TestIsSelectQuery:
     def test_insert(self):
         assert is_select_query("INSERT INTO users VALUES (1)") is False
 
+    def test_semicolon_inside_string_allowed(self):
+        assert is_select_query("SELECT id FROM t WHERE name = 'a;b'") is True
+
+    def test_union_allowed(self):
+        assert is_select_query("(SELECT 1 AS n) UNION ALL (SELECT 2)") is True
+
+    def test_trailing_semicolon_allowed(self):
+        assert is_select_query("SELECT 1;") is True
+
+    def test_stacked_select_insert_rejected(self):
+        assert is_select_query("SELECT 1; INSERT INTO t VALUES (1)") is False
+
+    def test_stacked_select_drop_rejected(self):
+        assert is_select_query("SELECT 1; DROP TABLE t") is False
+
+    def test_select_into_rejected(self):
+        assert is_select_query("SELECT * INTO t2 FROM t") is False
+
+    def test_comment_disguised_insert_rejected(self):
+        assert is_select_query("/* SELECT */ INSERT INTO t VALUES (1)") is False
+
+    def test_line_comment_before_insert_rejected(self):
+        assert is_select_query("-- SELECT\nINSERT INTO t VALUES (1)") is False
+
+    def test_exec_rejected(self):
+        assert is_select_query("EXEC sp_who") is False
+
+    def test_declare_batch_rejected(self):
+        assert is_select_query("DECLARE @x INT; SELECT 1") is False
+
+    def test_unparseable_rejected(self):
+        assert is_select_query("/* unterminated") is False
+
+    def test_update_rejected(self):
+        assert is_select_query("UPDATE t SET x = 1") is False
+
+    def test_delete_rejected(self):
+        assert is_select_query("DELETE FROM t") is False
+
+    def test_merge_rejected(self):
+        assert (
+            is_select_query(
+                "MERGE t USING s ON 1=1 WHEN MATCHED THEN UPDATE SET x=1;"
+            )
+            is False
+        )
+
 
 @pytest.mark.asyncio
 class TestListToolsAnnotations:
@@ -58,6 +105,41 @@ class TestCallToolReadOnlyGate:
         with patch.dict(os.environ, {}, clear=True):
             result = await call_tool("query", {"query": "INSERT INTO t VALUES (1)"})
             assert "read-only mode" in result[0].text
+
+    async def test_rejects_stacked_select_insert_without_connect(self):
+        """Multi-statement bypass must fail closed before pymssql.connect."""
+        env = {
+            "MSSQL_USER": "u",
+            "MSSQL_PASSWORD": "p",
+            "MSSQL_DATABASE": "db",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("mssql_mcp_server.server.pymssql.connect") as mock_connect,
+        ):
+            result = await call_tool(
+                "query",
+                {"query": "SELECT 1; INSERT INTO t VALUES (1)"},
+            )
+            assert "read-only mode" in result[0].text
+            mock_connect.assert_not_called()
+
+    async def test_rejects_select_into_without_connect(self):
+        env = {
+            "MSSQL_USER": "u",
+            "MSSQL_PASSWORD": "p",
+            "MSSQL_DATABASE": "db",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("mssql_mcp_server.server.pymssql.connect") as mock_connect,
+        ):
+            result = await call_tool(
+                "query",
+                {"query": "SELECT * INTO t2 FROM t"},
+            )
+            assert "read-only mode" in result[0].text
+            mock_connect.assert_not_called()
 
     async def test_allows_select_without_db(self):
         """SELECT passes the read-only gate (DB may fail later)."""

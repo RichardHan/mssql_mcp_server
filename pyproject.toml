@@ -23,6 +23,7 @@ dependencies = [
     # Remove the upper bound once the server is migrated to the 2.x API.
     "mcp>=1.0.0,<2.0.0",
     "pymssql>=2.2.8",
+    "sqlglot>=25.0.0,<31",
 ]
 
 [tool.mcp]

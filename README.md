@@ -78,7 +78,9 @@ MSSQL_COMMAND=query             # Optional override for the MCP tool name
 
 ### Read-only vs write mode
 
-By default the server exposes a **`query`** tool that only accepts `SELECT` / `WITH` statements and sets `readOnlyHint` (so Cursor Ask mode can use it). Set `MSSQL_ALLOW_WRITES=1` to expose **`execute_sql`** and allow writes. Prefer a read-only SQL login for the default mode.
+By default the server exposes a **`query`** tool that only accepts a **single** read-only `SELECT` / `WITH` / set-operation statement (parsed as T-SQL) and sets `readOnlyHint` (so Cursor Ask mode can use it). Stacked batches (`SELECT …; INSERT …`), `SELECT INTO`, `EXEC`, and other non-SELECT statements are rejected **before** they reach the database driver.
+
+Set `MSSQL_ALLOW_WRITES=1` to expose **`execute_sql`** and allow writes. Prefer a **least-privilege read-only SQL login** for the default mode — the parser is fail-closed defense in depth, not a substitute for database permissions, and does not claim to prove arbitrary T-SQL is free of side effects.
 
 
 ## Alternative Installation Methods
@@ -126,10 +128,12 @@ migrated to the 2.x API.
 
 ## Security
 
-- Create a dedicated SQL user with minimal permissions
-- Never use admin/sa accounts
+- Create a dedicated SQL user with minimal permissions (e.g. `db_datareader` for read-only deployments)
+- Never use admin/sa accounts for the MCP connection
 - Use Windows Authentication when possible
 - Enable encryption for sensitive data
+- Treat `MSSQL_ALLOW_WRITES` as an explicit opt-in; keep it off unless the user deliberately wants writes
+- Read-only mode parses T-SQL and fail-closes on unsupported/stacked statements — still pair it with least-privilege DB grants
 
 ## License
 
